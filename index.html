@@ -311,6 +311,17 @@
       5. Set <strong>Placement</strong>: <code>/</code> (to show on all pages)<br>
       6. Click <strong>Create</strong> — then scroll to the bottom of any Manager page
     </div>
+
+    <div id="debug-panel" style="margin-top:12px;width:100%;max-width:380px;text-align:left">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:700;color:#5a7a90;text-transform:uppercase;letter-spacing:.4px">Message Log (diagnosis)</span>
+        <span id="debug-count" style="font-size:11px;color:#94A3B8">Waiting…</span>
+      </div>
+      <div id="debug-log" style="background:#0f172a;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#94A3B8;max-height:130px;overflow-y:auto;min-height:40px">
+        <span style="color:#475569">No messages received yet — open this inside Manager.io</span>
+      </div>
+      <div id="debug-error" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;font-size:11.5px;color:#dc2626;line-height:1.5"></div>
+    </div>
   </div>
 </div>
 
@@ -548,53 +559,39 @@ function saveConfig() { localStorage.setItem(STORE_KEY, JSON.stringify(dualConfi
 loadConfig();
 
 // ── postMessage listener ──────────────────────────────────────
-// Manager.io sends context AFTER the iframe signals it is ready.
-// We must post a ready signal, then listen for the response.
+// Manager.io automatically sends context when the iframe loads. No ready signal needed.
 let ctxReceived = false;
-let readyInterval = null;
+const debugLog = [];
 
-function sendReadySignal() {
+window.addEventListener('message', function(event) {
+  // Capture every message for the debug panel
   try {
-    // Signal to Manager.io parent that this extension is ready to receive context
-    window.parent.postMessage({ type: 'manager-extension-ready' }, '*');
-    window.parent.postMessage('ready', '*'); // some versions expect a bare string
+    debugLog.push({
+      time: new Date().toISOString().slice(11,23),
+      origin: event.origin || '(same)',
+      data: JSON.stringify(event.data).slice(0, 400)
+    });
+    renderDebugLog();
   } catch(e) {}
-}
 
-window.addEventListener('message', async (event) => {
   if (ctxReceived) return;
 
-  // Normalise: Manager.io may send a plain object or JSON string
-  let data = event.data;
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch(e) { return; }
-  }
-  if (!data) return;
+  // Safely normalise data — handle object or JSON string
+  var data = event.data;
+  try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
+  if (!data || typeof data !== 'object') return;
 
-  // Accept both known message shapes
-  let payload = null;
-  if (data.type === 'manager-context' && data.payload) {
-    payload = data.payload;
-  } else if (data.apiEndpoint && data.apiAccessToken) {
-    // Some versions send the payload directly without a wrapper
-    payload = data;
-  }
-
+  // All known Manager.io payload shapes
+  var payload = null;
+  if (data.type === 'manager-context' && data.payload)        payload = data.payload;
+  else if (data.apiEndpoint && data.apiAccessToken)             payload = data;
+  else if (data.payload && data.payload.apiEndpoint)            payload = data.payload;
   if (!payload) return;
 
   ctxReceived = true;
-  if (readyInterval) { clearInterval(readyInterval); readyInterval = null; }
   ctx = payload;
-  onContextReceived();
-}, false);
-
-// Send ready signal immediately and keep retrying every 500ms until context arrives
-// (handles race condition where Manager.io sends context before our listener was registered)
-sendReadySignal();
-readyInterval = setInterval(() => {
-  if (ctxReceived) { clearInterval(readyInterval); return; }
-  sendReadySignal();
-}, 500);
+  try { onContextReceived(); } catch(e) { showConnectError(e); }
+});
 
 function onContextReceived() {
   // Hide connecting splash, show app
@@ -1088,6 +1085,32 @@ function renderInvoiceLines(area, lines, title) {
   area.innerHTML = `<div style="font-size:11.5px;color:var(--gray-500);margin-bottom:8px">📋 ${esc(title)}</div><div class="invoice-items-list">${rows}</div>`;
 }
 
+// ── Debug panel ──────────────────────────────────────────────
+function renderDebugLog() {
+  var el = document.getElementById('debug-log');
+  var cnt = document.getElementById('debug-count');
+  if (!el) return;
+  if (debugLog.length === 0) return;
+  cnt.textContent = debugLog.length + ' message(s) received';
+  cnt.style.color = '#22c55e';
+  el.innerHTML = debugLog.slice(-6).map(function(m) {
+    var color = m.data.includes('manager-context') ? '#4ade80' : '#94A3B8';
+    return '<div style="margin-bottom:4px;color:' + color + '">' +
+      '<span style="color:#475569">[' + m.time + ']</span> ' +
+      '<span style="color:#60a5fa">' + escHtml(m.origin) + '</span> ' +
+      escHtml(m.data) +
+      '</div>';
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function showConnectError(e) {
+  var el = document.getElementById('debug-error');
+  if (!el) return;
+  el.style.display = 'block';
+  el.innerHTML = '<strong>⚠ Error in onContextReceived:</strong><br>' + escHtml(String(e));
+}
+
 // ── Utilities ─────────────────────────────────────────────────
 function rd(n) { return Math.round(n * 100000) / 100000; }
 function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -1101,50 +1124,39 @@ function showToast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-// ── Demo / Preview mode (when opened standalone outside Manager.io) ───────────
-// After 2s with no context received, show a Demo button for testing purposes.
-// Inside Manager.io this timeout is cleared immediately when context arrives.
-setTimeout(() => {
-  if (ctxReceived) return; // already connected — do nothing
-
-  const hint = document.querySelector('.conn-hint');
-  if (!hint) return;
-
-  const demoBtn = document.createElement('button');
+// ── Demo / Preview mode ──────────────────────────────────────
+// After 3s with no context, show a Demo button.
+// Inside Manager.io the listener fires well before this.
+setTimeout(function() {
+  if (ctxReceived) return;
+  var demoBtn = document.createElement('button');
   demoBtn.style.cssText = 'margin-top:14px;padding:10px 22px;background:#1B3A5C;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;display:block;margin-left:auto;margin-right:auto';
   demoBtn.textContent = '▶ Preview in Demo Mode';
-  demoBtn.onclick = () => {
+  demoBtn.onclick = function() {
     ctxReceived = true;
-    if (readyInterval) clearInterval(readyInterval);
-    ctx = {
-      apiEndpoint: null,       // null → demo branch inside fetchInventoryItems
-      apiAccessToken: null,
-      currentPageUrl: '/sales-invoices',
-      businessName: 'Demo Business',
-    };
-    onContextReceived();
+    ctx = { apiEndpoint: null, apiAccessToken: null, currentPageUrl: '/sales-invoices', businessName: 'Demo Business' };
+    try { onContextReceived(); } catch(e) { showConnectError(e); }
   };
-  document.getElementById('connecting-view').appendChild(demoBtn);
-}, 2000);
+  var cv = document.getElementById('connecting-view');
+  if (cv) cv.appendChild(demoBtn);
+}, 3000);
 
-// fetchInventoryItems already handles null apiEndpoint/apiAccessToken gracefully
-// by skipping fetch and just showing an empty list. Override to load demo data.
-const _realFetch = fetchInventoryItems;
-fetchInventoryItems = async function() {
+// Override fetchInventoryItems to inject demo data when no real API available
+var _realFetch = fetchInventoryItems;
+fetchInventoryItems = function() {
   if (!ctx || !ctx.apiEndpoint || !ctx.apiAccessToken) {
-    // No real API — load demo items
     inventoryItems = [
-      { key: 'tile_6060', name: '60x60 Tiles',   code: 'T-6060', buyPrice: 45, sellPrice: 50 },
-      { key: 'tile_3060', name: '30x60 Tiles',   code: 'T-3060', buyPrice: 30, sellPrice: 35 },
-      { key: 'cement_50', name: 'Cement Bag 50kg',code: 'C-001',  buyPrice: 8,  sellPrice: 10 },
-      { key: 'paint_5l',  name: 'Paint (5L Tin)', code: 'P-5L',   buyPrice: 22, sellPrice: 28 },
-      { key: 'marble_sl', name: 'Marble Slab',    code: 'M-001',  buyPrice: 90, sellPrice: 110},
+      { key: 'tile_6060', name: '60x60 Tiles',    code: 'T-6060', buyPrice: 45, sellPrice: 50 },
+      { key: 'tile_3060', name: '30x60 Tiles',    code: 'T-3060', buyPrice: 30, sellPrice: 35 },
+      { key: 'cement_50', name: 'Cement Bag 50kg', code: 'C-001',  buyPrice: 8,  sellPrice: 10 },
+      { key: 'paint_5l',  name: 'Paint (5L Tin)',  code: 'P-5L',   buyPrice: 22, sellPrice: 28 },
+      { key: 'marble_sl', name: 'Marble Slab',     code: 'M-001',  buyPrice: 90, sellPrice: 110 },
     ];
     document.getElementById('items-loading').style.display = 'none';
     renderItemsTab();
     populateCalcDropdown();
     showToast('Demo mode — sample items loaded');
-    return;
+    return Promise.resolve();
   }
   return _realFetch();
 };
