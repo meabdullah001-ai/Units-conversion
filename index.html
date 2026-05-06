@@ -281,6 +281,25 @@
   hr.divider { border: none; border-top: 1px solid var(--gray-200); }
   .section-label { font-size: 11px; font-weight: 700; color: var(--gray-400); text-transform: uppercase; letter-spacing: .5px; }
   .loading-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--gray-500); padding: 10px 0; }
+
+  /* ── Connect screen ── */
+  #main { display:flex; justify-content:center; padding:20px 16px 40px; }
+  #connecting-view { width:100%; max-width:420px; display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; }
+  .conn-tabs { display:flex; background:var(--gray-100); border-radius:8px; padding:3px; gap:2px; width:100%; }
+  .conn-tab { flex:1; padding:7px; border:none; background:none; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:500; color:var(--gray-500); transition:all .15s; }
+  .conn-tab.active { background:#fff; color:var(--navy); font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+  .conn-panel { display:none; width:100%; text-align:left; flex-direction:column; gap:10px; }
+  .conn-panel.active { display:flex; }
+  .mc-group { display:flex; flex-direction:column; gap:5px; }
+  .mc-label { font-size:11px; font-weight:700; color:var(--gray-500); text-transform:uppercase; letter-spacing:.4px; }
+  .mc-input { width:100%; padding:9px 11px; border:1.5px solid var(--gray-200); border-radius:var(--radius); font-family:inherit; font-size:13px; color:var(--gray-900); transition:border-color .15s; box-sizing:border-box; }
+  .mc-input:focus { outline:none; border-color:var(--navy); }
+  .mc-hint { font-size:11.5px; color:var(--gray-500); line-height:1.6; background:var(--gray-50); border:1px solid var(--gray-200); border-radius:var(--radius); padding:9px 11px; }
+  .mc-hint code { background:var(--gray-200); padding:1px 5px; border-radius:3px; font-size:11px; }
+  .mc-connect-btn { width:100%; padding:11px; background:var(--navy); color:#fff; border:none; border-radius:var(--radius); cursor:pointer; font-family:inherit; font-size:14px; font-weight:700; transition:background .15s; }
+  .mc-connect-btn:hover { background:var(--navy-dk); }
+  .mc-error { display:none; font-size:12px; color:var(--red); background:var(--red-lt); border:1px solid #fecaca; border-radius:var(--radius); padding:9px 11px; }
+  .mc-saved-pill { display:none; align-items:center; gap:6px; background:var(--green-lt); border:1px solid #bbf7d0; border-radius:20px; padding:5px 12px; font-size:12px; font-weight:600; color:var(--green); }
 </style>
 </head>
 <body>
@@ -299,29 +318,80 @@
 <!-- Connecting splash -->
 <div id="main">
   <div id="connecting-view">
-    <div class="spinner"></div>
-    <div class="conn-title">Waiting for Manager.io…</div>
-    <div class="conn-sub">This extension must be loaded inside the Manager.io interface. It is waiting to receive API context via postMessage.</div>
-    <div class="conn-hint">
-      <strong>How to add this in Manager.io:</strong><br><br>
-      1. Go to <strong>Settings → Extensions → New Extension</strong><br>
-      2. Set <strong>Name</strong>: Dual Units<br>
-      3. Set <strong>Source</strong>: URL<br>
-      4. Paste this page's URL into <strong>Endpoint</strong><br>
-      5. Set <strong>Placement</strong>: <code>/</code> (to show on all pages)<br>
-      6. Click <strong>Create</strong> — then scroll to the bottom of any Manager page
+
+    <!-- Logo + status -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+      <div style="width:52px;height:52px;background:var(--navy);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px">⚖</div>
+      <div style="font-size:17px;font-weight:700;color:var(--gray-900)">Dual Units</div>
+      <div id="mc-saved-pill" class="mc-saved-pill">✓ Saved credentials found</div>
     </div>
 
-    <div id="debug-panel" style="margin-top:12px;width:100%;max-width:380px;text-align:left">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <span style="font-size:11px;font-weight:700;color:#5a7a90;text-transform:uppercase;letter-spacing:.4px">Message Log (diagnosis)</span>
-        <span id="debug-count" style="font-size:11px;color:#94A3B8">Waiting…</span>
-      </div>
-      <div id="debug-log" style="background:#0f172a;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#94A3B8;max-height:130px;overflow-y:auto;min-height:40px">
-        <span style="color:#475569">No messages received yet — open this inside Manager.io</span>
-      </div>
-      <div id="debug-error" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;font-size:11.5px;color:#dc2626;line-height:1.5"></div>
+    <!-- Tab switcher -->
+    <div class="conn-tabs">
+      <button class="conn-tab active" data-conn-tab="auto">⚡ Auto (Manager.io)</button>
+      <button class="conn-tab" data-conn-tab="manual">🔑 Manual Connect</button>
+      <button class="conn-tab" data-conn-tab="demo">▶ Demo</button>
     </div>
+
+    <!-- AUTO tab -->
+    <div class="conn-panel active" id="conn-auto">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0">
+        <div class="spinner" id="auto-spinner"></div>
+        <div style="font-size:13px;font-weight:600;color:var(--gray-700)" id="auto-status-text">Waiting for Manager.io…</div>
+        <div style="font-size:12px;color:var(--gray-500);line-height:1.6;text-align:center">
+          Open Manager.io → go to any page → scroll to bottom → expand the <strong>Dual Units</strong> panel
+        </div>
+      </div>
+      <div class="mc-hint">
+        <strong>Not seeing the panel?</strong> Make sure you added this extension in Manager.io:<br>
+        Settings → Extensions → New Extension<br>
+        Endpoint: <em>this page's URL</em> · Placement: <code>/</code>
+      </div>
+      <!-- Debug log -->
+      <div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+          <span style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.4px">Message log</span>
+          <span id="debug-count" style="font-size:11px;color:var(--gray-400)">0 received</span>
+        </div>
+        <div id="debug-log" style="background:#0f172a;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#94A3B8;max-height:100px;overflow-y:auto;min-height:36px">
+          <span style="color:#475569">Listening for postMessage from Manager.io…</span>
+        </div>
+      </div>
+      <div id="debug-error" style="display:none;font-size:12px;color:var(--red);background:var(--red-lt);border:1px solid #fecaca;border-radius:var(--radius);padding:9px 11px;"></div>
+    </div>
+
+    <!-- MANUAL tab -->
+    <div class="conn-panel" id="conn-manual">
+      <div class="mc-hint">
+        Enter your Manager.io API details to connect directly — no postMessage needed.<br><br>
+        <strong>Desktop:</strong> Endpoint = <code>http://localhost:PORT/api4</code><br>
+        <strong>Cloud:</strong> Endpoint = <code>https://api.manager.io/api4/KEY</code><br><br>
+        Get your token: Settings → API Access → Create Token
+      </div>
+      <div class="mc-group">
+        <label class="mc-label">API Endpoint URL</label>
+        <input class="mc-input" id="mc-endpoint" type="url" placeholder="http://localhost:8080/api4" spellcheck="false">
+      </div>
+      <div class="mc-group">
+        <label class="mc-label">API Access Token</label>
+        <input class="mc-input" id="mc-token" type="password" placeholder="Paste your token here" spellcheck="false">
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--gray-700);cursor:pointer">
+        <input type="checkbox" id="mc-remember" checked style="width:14px;height:14px">
+        Remember credentials in this browser
+      </label>
+      <div class="mc-error" id="mc-error"></div>
+      <button class="mc-connect-btn" id="mc-connect-btn">Connect to Manager.io</button>
+    </div>
+
+    <!-- DEMO tab -->
+    <div class="conn-panel" id="conn-demo">
+      <div class="mc-hint">
+        Demo mode loads sample inventory items so you can explore the extension without a Manager.io connection. Your dual-unit configurations will still be saved locally.
+      </div>
+      <button class="mc-connect-btn" id="demo-connect-btn" style="background:#475569">▶ Launch Demo Mode</button>
+    </div>
+
   </div>
 </div>
 
@@ -1124,33 +1194,110 @@ function showToast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-// ── Demo / Preview mode ──────────────────────────────────────
-// After 3s with no context, show a Demo button.
-// Inside Manager.io the listener fires well before this.
-setTimeout(function() {
-  if (ctxReceived) return;
-  var demoBtn = document.createElement('button');
-  demoBtn.style.cssText = 'margin-top:14px;padding:10px 22px;background:#1B3A5C;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;display:block;margin-left:auto;margin-right:auto';
-  demoBtn.textContent = '▶ Preview in Demo Mode';
-  demoBtn.onclick = function() {
-    ctxReceived = true;
-    ctx = { apiEndpoint: null, apiAccessToken: null, currentPageUrl: '/sales-invoices', businessName: 'Demo Business' };
-    try { onContextReceived(); } catch(e) { showConnectError(e); }
-  };
-  var cv = document.getElementById('connecting-view');
-  if (cv) cv.appendChild(demoBtn);
-}, 3000);
+// ── Connection tab UI ────────────────────────────────────────
+document.querySelectorAll('.conn-tab').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var target = btn.dataset.connTab;
+    document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
+    btn.classList.add('active');
+    var panel = document.getElementById('conn-' + target);
+    if (panel) panel.classList.add('active');
+  });
+});
 
-// Override fetchInventoryItems to inject demo data when no real API available
+// ── Manual connect ────────────────────────────────────────────
+var MC_STORE = 'mgr_manual_conn_v1';
+
+function loadSavedCreds() {
+  try {
+    var saved = JSON.parse(localStorage.getItem(MC_STORE));
+    if (saved && saved.endpoint && saved.token) {
+      document.getElementById('mc-endpoint').value = saved.endpoint;
+      document.getElementById('mc-token').value = saved.token;
+      document.getElementById('mc-saved-pill').style.display = 'flex';
+      return saved;
+    }
+  } catch(e) {}
+  return null;
+}
+
+function saveCreds(endpoint, token) {
+  try { localStorage.setItem(MC_STORE, JSON.stringify({ endpoint: endpoint, token: token })); } catch(e) {}
+}
+
+document.getElementById('mc-connect-btn').addEventListener('click', function() {
+  var endpoint = (document.getElementById('mc-endpoint').value || '').trim().replace(/\/+$/, '');
+  var token    = (document.getElementById('mc-token').value || '').trim();
+  var errEl    = document.getElementById('mc-error');
+  errEl.style.display = 'none';
+
+  if (!endpoint) { errEl.textContent = 'Please enter the API Endpoint URL.'; errEl.style.display = 'block'; return; }
+  if (!token)    { errEl.textContent = 'Please enter the API Access Token.'; errEl.style.display = 'block'; return; }
+
+  var btn = document.getElementById('mc-connect-btn');
+  btn.textContent = 'Connecting…'; btn.disabled = true;
+
+  // Test connection with a lightweight call
+  fetch(endpoint + '/business', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — check your endpoint and token');
+      return res.json();
+    })
+    .then(function(data) {
+      if (document.getElementById('mc-remember').checked) saveCreds(endpoint, token);
+      ctxReceived = true;
+      ctx = {
+        apiEndpoint: endpoint,
+        apiAccessToken: token,
+        currentPageUrl: '/manual',
+        businessName: data.name || data.businessName || data.Name || 'Your Business'
+      };
+      try { onContextReceived(); } catch(e) { showConnectError(e); }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Connect to Manager.io'; btn.disabled = false;
+      errEl.textContent = 'Connection failed: ' + err.message + '. Check the endpoint URL and token.';
+      errEl.style.display = 'block';
+    });
+});
+
+// ── Demo connect ──────────────────────────────────────────────
+document.getElementById('demo-connect-btn').addEventListener('click', function() {
+  ctxReceived = true;
+  ctx = { apiEndpoint: null, apiAccessToken: null, currentPageUrl: '/demo', businessName: 'Demo Business' };
+  try { onContextReceived(); } catch(e) { showConnectError(e); }
+});
+
+// ── Auto-load saved credentials on startup ────────────────────
+(function() {
+  var saved = loadSavedCreds();
+  if (saved) {
+    // Show manual tab as active hint — user has saved creds
+    // But still try auto first; if no postMessage in 4s, prompt manual
+    setTimeout(function() {
+      if (ctxReceived) return;
+      // Switch to manual tab automatically and show hint
+      document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
+      document.querySelector('[data-conn-tab="manual"]').classList.add('active');
+      document.getElementById('conn-manual').classList.add('active');
+      showToast('Saved credentials ready — click Connect');
+    }, 4000);
+  }
+})();
+
+// ── Override fetchInventoryItems for demo/manual mode ─────────
 var _realFetch = fetchInventoryItems;
 fetchInventoryItems = function() {
   if (!ctx || !ctx.apiEndpoint || !ctx.apiAccessToken) {
+    // Demo mode
     inventoryItems = [
-      { key: 'tile_6060', name: '60x60 Tiles',    code: 'T-6060', buyPrice: 45, sellPrice: 50 },
-      { key: 'tile_3060', name: '30x60 Tiles',    code: 'T-3060', buyPrice: 30, sellPrice: 35 },
-      { key: 'cement_50', name: 'Cement Bag 50kg', code: 'C-001',  buyPrice: 8,  sellPrice: 10 },
-      { key: 'paint_5l',  name: 'Paint (5L Tin)',  code: 'P-5L',   buyPrice: 22, sellPrice: 28 },
-      { key: 'marble_sl', name: 'Marble Slab',     code: 'M-001',  buyPrice: 90, sellPrice: 110 },
+      { key: 'tile_6060', name: '60x60 Tiles',     code: 'T-6060', buyPrice: 45, sellPrice: 50 },
+      { key: 'tile_3060', name: '30x60 Tiles',     code: 'T-3060', buyPrice: 30, sellPrice: 35 },
+      { key: 'cement_50', name: 'Cement Bag 50kg',  code: 'C-001',  buyPrice: 8,  sellPrice: 10 },
+      { key: 'paint_5l',  name: 'Paint (5L Tin)',   code: 'P-5L',   buyPrice: 22, sellPrice: 28 },
+      { key: 'marble_sl', name: 'Marble Slab',      code: 'M-001',  buyPrice: 90, sellPrice: 110 },
     ];
     document.getElementById('items-loading').style.display = 'none';
     renderItemsTab();
