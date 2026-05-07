@@ -673,34 +673,50 @@ window.addEventListener('message', function(event) {
 });
 
 function onContextReceived() {
-  // Hide connecting splash, show app
   document.getElementById('connecting-view').style.display = 'none';
   document.getElementById('app-view').style.display = 'block';
 
-  // Determine connection mode for status display
-  var isManual = (ctx.currentPageUrl === '/manual');
-  var isDemo   = (ctx.currentPageUrl === '/demo');
+  var inIframe   = (window.self !== window.top);
+  var isPostMsg  = ctx.currentPageUrl && ctx.currentPageUrl !== '/manual' && ctx.currentPageUrl !== '/demo'
+                   && ctx.currentPageUrl !== 'Standalone (browser tab)' && ctx.currentPageUrl !== 'Manager.io (iframe)';
+  var isDemo     = (!ctx.apiEndpoint || ctx.currentPageUrl === '/demo' || ctx.businessName === 'Demo');
   var statusDot  = document.getElementById('status-dot');
   var statusText = document.getElementById('status-text');
 
   if (isDemo) {
-    statusDot.className = 'status-dot'; statusDot.style.background = '#FCD34D';
+    statusDot.style.background = '#FCD34D';
     statusText.textContent = 'Demo Mode';
-  } else if (isManual) {
-    statusDot.className = 'status-dot'; statusDot.style.background = '#F97316';
-    statusText.textContent = 'Manual — API calls inside iframe only';
-  } else {
+  } else if (isPostMsg) {
     statusDot.className = 'status-dot connected';
-    statusText.textContent = 'Connected via Manager.io';
+    statusText.textContent = 'Connected via Manager.io ✓';
+  } else if (inIframe) {
+    statusDot.style.background = '#F97316';
+    statusText.textContent = 'Manual credentials (iframe)';
+  } else {
+    statusDot.style.background = '#F97316';
+    statusText.textContent = 'Standalone — inventory via iframe only';
   }
 
   // Context banner
-  var placement = ctx.currentPageUrl || ctx.placement || ctx.pageUrl || ctx.page || ctx.path || '—';
-  var business  = ctx.businessName || ctx.business || ctx.name || '';
+  var placement = ctx.currentPageUrl || '—';
+  var business  = ctx.businessName || '';
   document.getElementById('ctx-page-label').textContent = placement;
   if (business) document.getElementById('ctx-business-label').textContent = business;
 
-  // Load inventory
+  // Show a notice banner if running standalone (not inside Manager.io)
+  if (!inIframe && !isDemo) {
+    var banner = document.getElementById('ctx-banner');
+    if (banner) {
+      banner.style.background = '#FFF7ED';
+      banner.style.borderColor = '#FED7AA';
+      banner.style.color = '#C2410C';
+      banner.innerHTML = '<span style="font-size:15px">⚠</span>' +
+        '<div><strong>Running in browser tab</strong> — the calculator and item config work normally. ' +
+        'Inventory auto-load requires opening this inside Manager.io's extension panel. ' +
+        '<strong>You can still add items manually</strong> in the Items tab → "+ Custom Item".</div>';
+    }
+  }
+
   fetchInventoryItems();
 }
 
@@ -1357,44 +1373,69 @@ document.getElementById('demo-connect-btn').addEventListener('click', function()
   try { onContextReceived(); } catch(e) { showConnectError(e); }
 });
 
-// ── Auto-load saved credentials on startup ────────────────────
+// ── Startup: detect context and connect ────────────────────────
 (function() {
   var saved = loadSavedCreds();
+  var inIframe = (window.self !== window.top);
 
-  // Strategy 1: if inside an iframe AND have saved creds, connect immediately
-  // (inside Manager.io iframe, CORS is not a problem)
-  if (saved && window.self !== window.top) {
-    // We're in an iframe — use saved credentials directly without waiting for postMessage
+  function switchToTab(name) {
+    document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
+    var tab = document.querySelector('[data-conn-tab="' + name + '"]');
+    var panel = document.getElementById('conn-' + name);
+    if (tab) tab.classList.add('active');
+    if (panel) panel.classList.add('active');
+  }
+
+  if (inIframe) {
+    // ── Inside an iframe (likely Manager.io) ──────────────────────────────
+    // Give postMessage 2s to fire. If it doesn't, use saved credentials.
     setTimeout(function() {
-      if (ctxReceived) return; // postMessage already worked, great
-      ctxReceived = true;
-      // Try to get the parent (Manager.io) page URL
-      var parentUrl = '(inside Manager.io)';
-      try { parentUrl = window.parent.location.href; } catch(e) {
-        // Cross-origin: can't read parent URL directly — that's fine
-        parentUrl = 'Manager.io (cross-origin)';
+      if (ctxReceived) return;
+      if (saved) {
+        ctxReceived = true;
+        ctx = {
+          apiEndpoint:    saved.endpoint,
+          apiAccessToken: saved.token,
+          currentPageUrl: 'Manager.io (iframe)',
+          businessName:   'Your Business'
+        };
+        try { onContextReceived(); } catch(e) { showConnectError(e); }
+      } else {
+        // No saved creds — switch to manual tab
+        switchToTab('manual');
+        showToast('Please enter your Manager.io credentials');
       }
+    }, 2000);
+
+  } else {
+    // ── Opened directly in a browser tab ─────────────────────────────────
+    // postMessage will NEVER fire here. Skip the waiting screen entirely.
+    if (saved) {
+      // Has saved creds — connect immediately (will show CORS error in items,
+      // but calculator/items config work fine)
+      ctxReceived = true;
       ctx = {
         apiEndpoint:    saved.endpoint,
         apiAccessToken: saved.token,
-        currentPageUrl: parentUrl,
+        currentPageUrl: 'Standalone (browser tab)',
         businessName:   'Your Business'
       };
       try { onContextReceived(); } catch(e) { showConnectError(e); }
-    }, 1500);
-    return;
-  }
-
-  // Strategy 2: not in iframe — switch to manual tab after 4s
-  if (saved) {
-    setTimeout(function() {
-      if (ctxReceived) return;
-      document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
-      document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
-      document.querySelector('[data-conn-tab="manual"]').classList.add('active');
-      document.getElementById('conn-manual').classList.add('active');
-      showToast('Saved credentials ready — click Connect');
-    }, 3000);
+    } else {
+      // No saved creds — go straight to Demo so user can use the app
+      // Show a banner explaining the situation, but don't block them
+      setTimeout(function() {
+        if (ctxReceived) return;
+        ctxReceived = true;
+        ctx = {
+          apiEndpoint: null, apiAccessToken: null,
+          currentPageUrl: 'Standalone (browser tab)',
+          businessName: 'Demo'
+        };
+        try { onContextReceived(); } catch(e) { showConnectError(e); }
+      }, 2500);
+    }
   }
 })();
 
