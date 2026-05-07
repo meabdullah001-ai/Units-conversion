@@ -656,16 +656,27 @@ function tryExtractContext(data) {
   return null;
 }
 
-// 1. postMessage listener
+// 1. postMessage listener — catches messages from parent (iframe) AND opener (popup)
 window.addEventListener('message', function(ev) {
   var data = ev.data;
   try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
   var payload = tryExtractContext(data);
   if (!payload) return;
-  receiveContext(payload, 'postMessage');
+  receiveContext(payload, 'postMessage from ' + (ev.origin || '?'));
 });
 
-// 2. window.name (some Manager.io versions encode context here)
+// 2. Signal readiness to BOTH parent (iframe mode) and opener (popup mode)
+//    Manager.io may wait for this before sending context
+setTimeout(function() {
+  try { window.parent.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+  try { if (window.opener) window.opener.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+}, 100);
+setTimeout(function() {
+  try { window.parent.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+  try { if (window.opener) window.opener.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+}, 500);
+
+// 3. window.name
 try {
   if (window.name && window.name.length > 10) {
     var nameData = JSON.parse(window.name);
@@ -674,7 +685,7 @@ try {
   }
 } catch(e) {}
 
-// 3. URL query parameters (?context=... or ?payload=...)
+// 4. URL query parameters
 try {
   var params = new URLSearchParams(window.location.search);
   ['context','payload','ctx','managerContext'].forEach(function(key) {
@@ -686,6 +697,16 @@ try {
       if (pCtx) receiveContext(pCtx, 'URL param: '+key);
     } catch(e) {}
   });
+} catch(e) {}
+
+// 5. Auto-detect Manager.io domain from document.referrer
+//    e.g. referrer = https://mnzrventures.manager.io/sales-invoices -> base = https://mnzrventures.manager.io
+try {
+  var ref = document.referrer;
+  if (ref && ref.includes('manager.io')) {
+    var refBase = ref.replace(/^(https?:\/\/[^\/]+).*/, '$1');
+    window._detectedManagerBase = refBase;
+  }
 } catch(e) {}
 
 function receiveContext(payload, source) {
@@ -800,13 +821,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Pre-fill saved credentials in manual connect form
   var saved = loadCreds();
+  var epEl  = document.getElementById('mc-endpoint');
+  var tkEl  = document.getElementById('mc-token');
+  var pill  = document.getElementById('mc-saved-pill');
   if (saved) {
-    var epEl = document.getElementById('mc-endpoint');
-    var tkEl = document.getElementById('mc-token');
-    var pill = document.getElementById('mc-saved-pill');
     if (epEl) epEl.value = saved.endpoint || '';
     if (tkEl) tkEl.value = saved.token    || '';
     if (pill) pill.style.display = 'flex';
+  } else if (window._detectedManagerBase && epEl) {
+    // Auto-suggest the detected Manager.io domain as the endpoint
+    epEl.value = window._detectedManagerBase + '/api2';
+    epEl.style.borderColor = '#22c55e';
+    epEl.title = 'Auto-detected from Manager.io page';
   }
 });
 
@@ -887,41 +913,34 @@ function loadInventory() {
     loadEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div> <span>Loading from Manager.io…</span>';
   }
 
-  var base    = ctx.apiEndpoint.replace(/\/+$/,'');
-  var headers = { 'Authorization': 'Bearer ' + ctx.apiAccessToken };
+  var savedBase = (ctx.apiEndpoint || '').replace(/\/+$/, '');
+  var headers   = { 'Authorization': 'Bearer ' + ctx.apiAccessToken };
 
-  // Auto-discover business key if base ends in /api2
-  var fetchChain = Promise.resolve(base);
-  if (/\/api2\s*$/i.test(base)) {
-    fetchChain = fetch(base, { headers: headers })
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(d) {
-        if (!d) return base;
-        var list = Array.isArray(d) ? d : (d.businesses || d.data || [d]);
-        var biz  = list[0] || {};
-        var key  = biz.key || biz.Key || biz.id || biz.Id || '';
-        if (key) {
-          var nb = base + '/' + key;
-          ctx.apiEndpoint = nb;
-          saveCreds(nb, ctx.apiAccessToken);
-          ctx.businessName = biz.name || biz.Name || 'Your Business';
-          var bl = document.getElementById('ctx-business-label');
-          if (bl) bl.textContent = ctx.businessName;
-          return nb;
-        }
-        return base;
-      })
-      .catch(function(){ return base; });
+  // Build a list of base URLs to try — including the auto-detected Manager.io domain
+  var basesToTry = [savedBase];
+
+  // If we detected the Manager.io domain from document.referrer, add api2 variants
+  if (window._detectedManagerBase) {
+    var mb = window._detectedManagerBase;
+    if (basesToTry.indexOf(mb + '/api2') === -1)    basesToTry.push(mb + '/api2');
+    if (basesToTry.indexOf(mb + '/api2/') === -1)   basesToTry.push(mb + '/api2/');
   }
 
-  fetchChain.then(function(resolvedBase) {
-    var urls = [
-      resolvedBase + '/inventory-item-batch',
-      resolvedBase + '/InventoryItem-batch',
-      resolvedBase + '/inventory-items',
-    ];
-    return tryFetchEndpoints(urls, headers);
-  }).then(function(items) {
+  // Also try without business key if saved base already has /api2/SOMETHING
+  var api2Match = savedBase.match(/^(https?:\/\/.+\/api2)/i);
+  if (api2Match && basesToTry.indexOf(api2Match[1]) === -1) basesToTry.push(api2Match[1]);
+
+  // For each base, expand into full endpoint URLs
+  var allUrls = [];
+  basesToTry.forEach(function(base) {
+    allUrls.push(base + '/inventory-item-batch');
+    allUrls.push(base + '/InventoryItem-batch');
+  });
+
+  // Remove duplicates
+  var seen = {}; allUrls = allUrls.filter(function(u){ if(seen[u])return false; seen[u]=true; return true; });
+
+  tryFetchEndpoints(allUrls, headers).then(function(items) {
     if (loadEl) loadEl.style.display = 'none';
     if (items && items.length > 0) {
       inventoryItems = items;
@@ -929,19 +948,28 @@ function loadInventory() {
       populateCalcDropdown();
       showToast('✓ ' + items.length + ' items loaded');
     } else {
-      showInventoryError('No items returned. Check your endpoint includes the business key.<br>Format: <code>http://localhost:PORT/api2/BUSINESS_KEY</code>');
+      showInventoryError(
+        '<strong>No items found.</strong> Tried these URLs:<br>' +
+        allUrls.map(function(u){ return '• <code>'+u+'</code>'; }).join('<br>') +
+        '<br><br>Please update your endpoint in <strong>Manual Connect</strong>.<br>' +
+        'For Manager.io Cloud your endpoint should be:<br>' +
+        '<code>https://mnzrventures.manager.io/api2</code><br>' +
+        '(replace <em>mnzrventures</em> with your actual business handle)'
+      );
     }
   }).catch(function(err) {
     if (loadEl) loadEl.style.display = 'none';
     var msg = String(err);
-    var isCors = msg.includes('fetch') || msg.includes('Failed') || msg.includes('NetworkError');
-    if (isCors) {
-      showInventoryError('Browser blocked the API call (CORS/mixed content). ' +
-        'This is normal outside Manager.io. Your credentials are saved — ' +
-        'they will be used automatically when the extension loads inside Manager.io.');
-    } else {
-      showInventoryError('API error: ' + msg);
-    }
+    var isCors = msg.toLowerCase().includes('failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed');
+    showInventoryError(
+      (isCors
+        ? '<strong>⚠ CORS / Network Error</strong> — the browser blocked the API call.<br><br>'
+        : '<strong>⚠ API Error:</strong> ' + msg + '<br><br>') +
+      '<strong>For Manager.io Cloud, try updating your endpoint to:</strong><br>' +
+      '<code>https://YOUR-BUSINESS.manager.io/api2</code><br>' +
+      '(e.g. <code>https://mnzrventures.manager.io/api2</code>)<br><br>' +
+      'Then go to <strong>Manual Connect</strong> tab and reconnect.'
+    );
   });
 }
 
