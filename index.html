@@ -339,13 +339,16 @@
         <div class="spinner" id="auto-spinner"></div>
         <div style="font-size:13px;font-weight:600;color:var(--gray-700)" id="auto-status-text">Waiting for Manager.io…</div>
         <div style="font-size:12px;color:var(--gray-500);line-height:1.6;text-align:center">
-          Open Manager.io → go to any page → scroll to bottom → expand the <strong>Dual Units</strong> panel
+          This page must be opened <strong>inside Manager.io</strong>, not in a separate browser tab.
         </div>
       </div>
-      <div class="mc-hint">
-        <strong>Not seeing the panel?</strong> Make sure you added this extension in Manager.io:<br>
-        Settings → Extensions → New Extension<br>
-        Endpoint: <em>this page's URL</em> · Placement: <code>/</code>
+      <div class="mc-hint" style="background:#fef9c3;border-color:#fde047;color:#713f12">
+        <strong>⚠ If you are reading this inside Manager.io</strong> — the Auto tab should connect automatically. If it hasn't after 10 seconds, use the <strong>Manual Connect</strong> tab instead.<br><br>
+        <strong>⚠ If you opened this URL in a new tab</strong> — that won't work. You must add it as a Manager.io Extension:<br>
+        1. In Manager.io → <strong>Settings → Extensions → New Extension</strong><br>
+        2. Paste this page's GitHub URL as the <strong>Endpoint</strong><br>
+        3. Set Placement to <code>/</code><br>
+        4. Save — then go to any Manager.io page and <strong>scroll to the bottom</strong> to see the panel
       </div>
       <!-- Debug log -->
       <div>
@@ -363,21 +366,20 @@
     <!-- MANUAL tab -->
     <div class="conn-panel" id="conn-manual">
       <div class="mc-hint">
-        <strong>⚠ Important:</strong> Due to browser security (CORS), API calls only work from <em>inside</em> the Manager.io iframe — not from this page directly.<br><br>
-        <strong>How this works:</strong><br>
-        1. Enter your endpoint &amp; token below<br>
-        2. Click Connect — credentials are saved locally<br>
-        3. Open Manager.io → your extension panel will auto-load inventory using these saved credentials<br><br>
-        <strong>Where to find these:</strong><br>
-        • <strong>Desktop endpoint:</strong> <code>http://localhost:PORT/api4</code><br>
-        &nbsp;&nbsp;(find PORT in Manager.io → About)<br>
-        • <strong>Cloud endpoint:</strong> <code>https://api.manager.io/api4/BUSINESS_KEY</code><br>
-        &nbsp;&nbsp;(find BUSINESS_KEY in Settings → API Access)<br>
-        • <strong>Token:</strong> Settings → API Access → Create Token
+        <strong>Step 1 — Find your endpoint URL:</strong><br>
+        • <strong>Desktop app:</strong> <code>http://localhost:PORT/api2</code><br>
+        &nbsp;&nbsp;→ Find PORT: in Manager.io click the <strong>⋮ menu → About</strong><br>
+        &nbsp;&nbsp;→ Example: <code>http://localhost:11542/api2</code><br><br>
+        • <strong>Cloud edition:</strong> <code>https://api.manager.io/api2/BUSINESS_KEY</code><br>
+        &nbsp;&nbsp;→ Find BUSINESS_KEY: Settings → API Access → it shows in the sample URL<br><br>
+        <strong>Step 2 — Get your Access Token:</strong><br>
+        Settings → API Access → <strong>New Access Token</strong> → copy it<br><br>
+        <strong>Step 3 — Enter both below and click Connect.</strong><br>
+        Credentials are saved locally. Inside Manager.io the extension will use them automatically.
       </div>
       <div class="mc-group">
         <label class="mc-label">API Endpoint URL</label>
-        <input class="mc-input" id="mc-endpoint" type="url" placeholder="http://localhost:8080/api4" spellcheck="false">
+        <input class="mc-input" id="mc-endpoint" type="url" placeholder="http://localhost:8080/api2" spellcheck="false">
       </div>
       <div class="mc-group">
         <label class="mc-label">API Access Token</label>
@@ -723,11 +725,12 @@ async function fetchInventoryItems() {
     'Content-Type': 'application/json',
   };
 
-  // All known Manager.io batch endpoint variants
+  // All known Manager.io batch endpoint variants (api2 format)
   const endpoints = [
     base + '/inventory-item-batch',
     base + '/inventory-items-batch',
     base + '/inventoryitem-batch',
+    base + '/InventoryItem-batch',
   ];
 
   let fetchError = null;
