@@ -620,845 +620,672 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-//  Manager.io Dual Units Extension — v1.0
-//  Uses Manager.io postMessage context API + localStorage
+//  Manager.io Dual Units Extension — v1.2
+//  Clean rewrite: no function reassignment hacks, robust connection
 // ═══════════════════════════════════════════════════════════════
 
-let ctx = null;                  // manager-context payload
-let inventoryItems = [];         // fetched from Manager.io API
-let dualConfig = {};             // { itemKey: { unit1, unit2, ratio, price1, price2 } }
-let lastFocusedInput = null;
-let editingKey = null;
-let calcSelected = null;         // currently selected item in calculator
+// ── Config / State ─────────────────────────────────────────────
+var ctx            = null;
+var inventoryItems = [];
+var dualConfig     = {};
+var calcSelected   = null;
+var debugLog       = [];
+var editingKey     = null;
+var ctxReceived    = false;
+var appMode        = 'demo'; // 'live' | 'manual' | 'demo'
 
-// ── Storage ──────────────────────────────────────────────────
-const STORE_KEY = 'mgr_dual_config_v1';
-function loadConfig() { try { dualConfig = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch(e) { dualConfig = {}; } }
-function saveConfig() { localStorage.setItem(STORE_KEY, JSON.stringify(dualConfig)); }
+// ── Storage ────────────────────────────────────────────────────
+var DUAL_KEY = 'mgr_dual_config_v1';
+var CRED_KEY = 'mgr_manual_conn_v1';
+
+function loadConfig()  { try { dualConfig = JSON.parse(localStorage.getItem(DUAL_KEY)) || {}; } catch(e){ dualConfig={}; } }
+function saveConfig()  { try { localStorage.setItem(DUAL_KEY, JSON.stringify(dualConfig)); } catch(e){} }
+function loadCreds()   { try { return JSON.parse(localStorage.getItem(CRED_KEY)); } catch(e){ return null; } }
+function saveCreds(ep,tk){ try { localStorage.setItem(CRED_KEY, JSON.stringify({endpoint:ep,token:tk})); } catch(e){} }
 loadConfig();
 
-// ── postMessage listener ──────────────────────────────────────
-// Manager.io automatically sends context when the iframe loads. No ready signal needed.
-let ctxReceived = false;
-const debugLog = [];
+// ── Connection: try every known Manager.io context delivery method ──
+function tryExtractContext(data) {
+  if (!data || typeof data !== 'object') return null;
+  // Standard: { type:'manager-context', payload:{...} }
+  if (data.type === 'manager-context' && data.payload) return data.payload;
+  // Direct: { apiEndpoint, apiAccessToken }
+  if (data.apiEndpoint && data.apiAccessToken) return data;
+  // Nested payload without type
+  if (data.payload && data.payload.apiEndpoint) return data.payload;
+  return null;
+}
 
-window.addEventListener('message', function(event) {
-  // Capture every message for the debug panel
-  try {
-    debugLog.push({
-      time: new Date().toISOString().slice(11,23),
-      origin: event.origin || '(same)',
-      data: JSON.stringify(event.data).slice(0, 400)
-    });
-    renderDebugLog();
-  } catch(e) {}
-
-  if (ctxReceived) return;
-
-  // Safely normalise data — handle object or JSON string
-  var data = event.data;
+// 1. postMessage listener
+window.addEventListener('message', function(ev) {
+  var data = ev.data;
   try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
-  if (!data || typeof data !== 'object') return;
-
-  // All known Manager.io payload shapes
-  var payload = null;
-  if (data.type === 'manager-context' && data.payload)        payload = data.payload;
-  else if (data.apiEndpoint && data.apiAccessToken)             payload = data;
-  else if (data.payload && data.payload.apiEndpoint)            payload = data.payload;
+  var payload = tryExtractContext(data);
   if (!payload) return;
+  receiveContext(payload, 'postMessage');
+});
 
+// 2. window.name (some Manager.io versions encode context here)
+try {
+  if (window.name && window.name.length > 10) {
+    var nameData = JSON.parse(window.name);
+    var nameCtx  = tryExtractContext(nameData);
+    if (nameCtx) receiveContext(nameCtx, 'window.name');
+  }
+} catch(e) {}
+
+// 3. URL query parameters (?context=... or ?payload=...)
+try {
+  var params = new URLSearchParams(window.location.search);
+  ['context','payload','ctx','managerContext'].forEach(function(key) {
+    var val = params.get(key);
+    if (!val) return;
+    try {
+      var parsed = JSON.parse(atob(val));
+      var pCtx   = tryExtractContext(parsed);
+      if (pCtx) receiveContext(pCtx, 'URL param: '+key);
+    } catch(e) {}
+  });
+} catch(e) {}
+
+function receiveContext(payload, source) {
+  if (ctxReceived) return;
   ctxReceived = true;
+  appMode = 'live';
   ctx = payload;
-  try { onContextReceived(); } catch(e) { showConnectError(e); }
-});
-
-function onContextReceived() {
-  document.getElementById('connecting-view').style.display = 'none';
-  document.getElementById('app-view').style.display = 'block';
-
-  var inIframe   = (window.self !== window.top);
-  var isPostMsg  = ctx.currentPageUrl && ctx.currentPageUrl !== '/manual' && ctx.currentPageUrl !== '/demo'
-                   && ctx.currentPageUrl !== 'Standalone (browser tab)' && ctx.currentPageUrl !== 'Manager.io (iframe)';
-  var isDemo     = (!ctx.apiEndpoint || ctx.currentPageUrl === '/demo' || ctx.businessName === 'Demo');
-  var statusDot  = document.getElementById('status-dot');
-  var statusText = document.getElementById('status-text');
-
-  if (isDemo) {
-    statusDot.style.background = '#FCD34D';
-    statusText.textContent = 'Demo Mode';
-  } else if (isPostMsg) {
-    statusDot.className = 'status-dot connected';
-    statusText.textContent = 'Connected via Manager.io ✓';
-  } else if (inIframe) {
-    statusDot.style.background = '#F97316';
-    statusText.textContent = 'Manual credentials (iframe)';
-  } else {
-    statusDot.style.background = '#F97316';
-    statusText.textContent = 'Standalone — inventory via iframe only';
-  }
-
-  // Context banner
-  var placement = ctx.currentPageUrl || '—';
-  var business  = ctx.businessName || '';
-  document.getElementById('ctx-page-label').textContent = placement;
-  if (business) document.getElementById('ctx-business-label').textContent = business;
-
-  // Show a notice banner if running standalone (not inside Manager.io)
-  if (!inIframe && !isDemo) {
-    var banner = document.getElementById('ctx-banner');
-    if (banner) {
-      banner.style.background = '#FFF7ED';
-      banner.style.borderColor = '#FED7AA';
-      banner.style.color = '#C2410C';
-      banner.innerHTML = '<span style="font-size:15px">⚠</span>' +
-        '<div><strong>Running in browser tab</strong> — the calculator and item config work normally. ' +
-        'Inventory auto-load requires opening this inside Manager.io's extension panel. ' +
-        '<strong>You can still add items manually</strong> in the Items tab → "+ Custom Item".</div>';
-    }
-  }
-
-  fetchInventoryItems();
+  console.log('[DualUnits] Context received via', source);
+  debugLog.push({ time: now(), origin: source, data: 'Context received ✓' });
+  renderDebugLog();
+  launchApp();
 }
 
-// ── Fetch inventory items from Manager.io API ─────────────────
-async function fetchInventoryItems() {
-  if (!ctx) return;
+// ── Debug helpers ──────────────────────────────────────────────
+function now() { return new Date().toISOString().slice(11,19); }
 
-  const base  = (ctx.apiEndpoint || '').replace(/\/+$/, '');
-  const token = ctx.apiAccessToken || '';
-
-  if (!base || !token) {
-    document.getElementById('items-loading').style.display = 'none';
-    renderItemsTab();
-    populateCalcDropdown();
-    return;
-  }
-
-  var loadingEl = document.getElementById('items-loading');
-  loadingEl.style.display = 'flex';
-  loadingEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Loading inventory from Manager.io…';
-
-  const headers = { 'Authorization': 'Bearer ' + token };
-
-  // ── Step 1: Discover the correct base URL ──────────────────────────────
-  // Manager.io api2 desktop format: http://localhost:PORT/api2/BUSINESS_KEY
-  // The user may have entered just http://localhost:PORT/api2 (no business key)
-  // or the full http://localhost:PORT/api2/BUSINESSKEY
-  // We try to auto-discover by fetching the /api2 root which lists businesses.
-
-  var resolvedBase = base; // may be updated after discovery
-  var discoveryError = null;
-
-  // If base ends in /api2 (no business key), try to discover businesses
-  if (/\/api2\s*$/i.test(base)) {
-    try {
-      var discRes = await fetch(base, { headers: headers });
-      if (discRes.ok) {
-        var discData = await discRes.json();
-        // Response is usually an array of business objects or a single object
-        var businesses = Array.isArray(discData) ? discData : (discData.businesses || discData.data || [discData]);
-        if (businesses.length > 0) {
-          var biz = businesses[0];
-          var bizKey = biz.key || biz.Key || biz.id || biz.Id || biz.handle || '';
-          if (bizKey) {
-            resolvedBase = base + '/' + bizKey;
-            // Update ctx so it's correct for future calls
-            ctx.apiEndpoint = resolvedBase;
-            // Save updated endpoint
-            try {
-              var saved = JSON.parse(localStorage.getItem('mgr_manual_conn_v1') || '{}');
-              saved.endpoint = resolvedBase;
-              localStorage.setItem('mgr_manual_conn_v1', JSON.stringify(saved));
-            } catch(e) {}
-            ctx.businessName = biz.name || biz.Name || biz.businessName || 'Your Business';
-            document.getElementById('ctx-business-label').textContent = ctx.businessName;
-            showToast('Business found: ' + ctx.businessName);
-          }
-        }
-      }
-    } catch(e) {
-      discoveryError = e.message;
-    }
-  }
-
-  // ── Step 2: Try all known inventory batch endpoint formats ─────────────
-  var triedUrls = [];
-  var lastError = discoveryError || '';
-  var found = false;
-
-  var candidates = [
-    resolvedBase + '/inventory-item-batch',
-    resolvedBase + '/InventoryItem-batch',
-    resolvedBase + '/inventory-items',
-    base + '/inventory-item-batch',
-    base + '/InventoryItem-batch',
-  ];
-  // Deduplicate
-  var seen = {};
-  var endpoints = candidates.filter(function(u) {
-    if (seen[u]) return false;
-    seen[u] = true; return true;
-  });
-
-  for (var i = 0; i < endpoints.length; i++) {
-    var url = endpoints[i];
-    triedUrls.push(url);
-    try {
-      var res = await fetch(url, { headers: headers });
-      if (!res.ok) { lastError = 'HTTP ' + res.status + ' at ' + url; continue; }
-      var data = await res.json();
-
-      var items = [];
-      if (Array.isArray(data))                    items = data;
-      else if (data && Array.isArray(data.data))  items = data.data;
-      else if (data && Array.isArray(data.items)) items = data.items;
-
-      if (items.length > 0) {
-        inventoryItems = items.map(function(it) {
-          return {
-            key:       it.key  || it.Key  || it.id  || it.Id  || String(Math.random()),
-            name:      it.name || it.Name || it.itemName || it.ItemName || it.description || '',
-            code:      it.code || it.Code || it.itemCode || '',
-            buyPrice:  parseFloat(it.purchasePrice || it.PurchasePrice || it.buyPrice  || 0) || 0,
-            sellPrice: parseFloat(it.salesPrice    || it.SalesPrice    || it.salePrice || it.sellPrice || 0) || 0,
-          };
-        }).filter(function(it) { return it.name; });
-        found = true;
-        break;
-      } else {
-        lastError = 'Empty response from ' + url;
-      }
-    } catch(e) {
-      lastError = e.message + ' (at ' + url.replace(base,'') + ')';
-    }
-  }
-
-  // ── Step 3: Show result or detailed error ──────────────────────────────
-  loadingEl.style.display = 'block';
-
-  if (found) {
-    loadingEl.style.display = 'none';
-    renderItemsTab();
-    populateCalcDropdown();
-    showToast('✓ ' + inventoryItems.length + ' inventory items loaded');
-    return;
-  }
-
-  // Show actionable error with the URLs we tried
-  var isCors = lastError.toLowerCase().includes('fetch') || lastError.includes('Failed') || lastError.includes('NetworkError');
-  var errHtml = '';
-  if (isCors) {
-    errHtml = '<strong>⚠ CORS / Network Error</strong><br>' +
-      'API calls are blocked outside Manager.io's iframe. Your credentials are saved. ' +
-      'Open the extension panel <em>inside Manager.io</em> and it will connect automatically.<br><br>' +
-      '<strong>Error:</strong> ' + lastError;
-  } else {
-    errHtml = '<strong>⚠ Could not load inventory</strong><br>' +
-      '<strong>Last error:</strong> ' + lastError + '<br><br>' +
-      '<strong>Tried:</strong><br>' + triedUrls.map(function(u){ return '• ' + u; }).join('<br>') + '<br><br>' +
-      '<strong>Fix:</strong> Check your Endpoint URL includes the business key.<br>' +
-      'Desktop format: <code>http://localhost:PORT/api2/BUSINESS_KEY</code><br>' +
-      'In Manager.io: Settings → API Access → the sample URL shows your BUSINESS_KEY';
-  }
-
-  loadingEl.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px;line-height:1.7;width:100%">' + errHtml + '</div>';
-  populateCalcDropdown();
-}
-
-// ── Focus tracking via postMessage to parent ──────────────────
-// Manager.io's parent listens for certain messages; we track focus within our iframe
-// by listening to focusin events that bubble from the parent via the 'fill' mechanism.
-// The actual fill uses postMessage to the parent window.
-function setupParentFocusTracking() {
-  // We cannot directly track focus in parent frame (cross-origin).
-  // Instead, we use a workaround: when the user clicks in the Manager.io form
-  // and then clicks our Fill button, we send a postMessage to parent asking
-  // it to fill the last focused input. Manager.io may or may not relay this.
-  // As a fallback we show the value prominently for manual entry.
-}
-
-// ── Tab switching ─────────────────────────────────────────────
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.dataset.tab;
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + target).classList.add('active');
-  });
-});
-
-// ── Calculator ────────────────────────────────────────────────
-function populateCalcDropdown() {
-  const sel = document.getElementById('calc-item-select');
-  const allItems = getAllItems();
-  const count = document.getElementById('calc-items-count');
-  count.textContent = allItems.length + ' items';
-  count.className = 'tag tag-blue';
-
-  sel.innerHTML = '<option value="">— Select an inventory item —</option>';
-  allItems.forEach(it => {
-    const hasDual = !!dualConfig[it.key];
-    const opt = document.createElement('option');
-    opt.value = it.key;
-    opt.textContent = (hasDual ? '⚖ ' : '') + it.name + (it.code ? ` (${it.code})` : '');
-    sel.appendChild(opt);
-  });
-  if (calcSelected) sel.value = calcSelected.key;
-}
-
-function getAllItems() {
-  const fromApi = inventoryItems;
-  // Also include any custom items stored in config that aren't in API
-  const customKeys = Object.keys(dualConfig).filter(k => k.startsWith('custom_'));
-  const customItems = customKeys.map(k => ({
-    key: k, name: dualConfig[k].name || k, code: '', buyPrice: 0, sellPrice: 0
-  }));
-  return [...fromApi, ...customItems];
-}
-
-document.getElementById('calc-item-select').addEventListener('change', function() {
-  const key = this.value;
-  if (!key) { calcSelected = null; updateCalcUI(); return; }
-  const item = getAllItems().find(i => i.key === key) || { key, name: key };
-  calcSelected = item;
-  updateCalcUI();
-});
-
-function updateCalcUI() {
-  const body = document.getElementById('calc-body');
-  const empty = document.getElementById('calc-empty');
-  const noDual = document.getElementById('calc-no-dual');
-
-  if (!calcSelected) {
-    body.style.display = 'none'; empty.style.display = 'block'; noDual.style.display = 'none'; return;
-  }
-
-  const cfg = dualConfig[calcSelected.key];
-  if (!cfg) {
-    body.style.display = 'none'; empty.style.display = 'none'; noDual.style.display = 'block'; return;
-  }
-
-  body.style.display = 'block'; empty.style.display = 'none'; noDual.style.display = 'none';
-
-  document.getElementById('ratio-badge').textContent = `1 ${cfg.unit1} = ${cfg.ratio} ${cfg.unit2}`;
-  document.getElementById('calc-lbl-u1').textContent = cfg.unit1;
-  document.getElementById('calc-lbl-u2').textContent = cfg.unit2;
-  document.getElementById('calc-badge-u1').textContent = cfg.unit1;
-  document.getElementById('calc-badge-u2').textContent = cfg.unit2;
-  document.getElementById('fill-lbl-u1').textContent = cfg.unit1;
-  document.getElementById('fill-lbl-u2').textContent = cfg.unit2;
-  document.getElementById('fill-u1-btn').id = 'fill-u1-btn';
-  document.getElementById('fill-u2-btn').id = 'fill-u2-btn';
-
-  const p1 = cfg.price1 || calcSelected.sellPrice || 0;
-  const p2 = cfg.price2 || 0;
-  document.getElementById('calc-ph1').textContent = p1 ? `@ ${fmt(p1)} / ${cfg.unit1}` : '';
-  document.getElementById('calc-ph2').textContent = p2 ? `@ ${fmt(p2)} / ${cfg.unit2}` : '';
-
-  document.getElementById('calc-val-u1').value = '';
-  document.getElementById('calc-val-u2').value = '';
-  updatePriceSummary();
-}
-
-document.getElementById('calc-val-u1').addEventListener('input', function() {
-  const cfg = calcSelected && dualConfig[calcSelected.key];
-  if (!cfg) return;
-  const v = parseFloat(this.value);
-  const u2 = document.getElementById('calc-val-u2');
-  if (!isNaN(v)) { u2.value = rd(v * cfg.ratio); u2.classList.toggle('has-val', true); }
-  else u2.value = '';
-  updatePriceSummary();
-});
-
-document.getElementById('calc-val-u2').addEventListener('input', function() {
-  const cfg = calcSelected && dualConfig[calcSelected.key];
-  if (!cfg) return;
-  const v = parseFloat(this.value);
-  const u1 = document.getElementById('calc-val-u1');
-  if (!isNaN(v)) { u1.value = rd(v / cfg.ratio); u1.classList.toggle('has-val', true); }
-  else u1.value = '';
-  updatePriceSummary();
-});
-
-function updatePriceSummary() {
-  const box = document.getElementById('price-summary');
-  const rows = document.getElementById('ps-rows');
-  const cfg = calcSelected && dualConfig[calcSelected.key];
-  if (!cfg) { box.style.display = 'none'; return; }
-
-  const v1 = parseFloat(document.getElementById('calc-val-u1').value);
-  const v2 = parseFloat(document.getElementById('calc-val-u2').value);
-  if (isNaN(v1) && isNaN(v2)) { box.style.display = 'none'; return; }
-
-  const q1 = isNaN(v1) ? rd((v2||0) / cfg.ratio) : v1;
-  const q2 = isNaN(v2) ? rd((v1||0) * cfg.ratio) : v2;
-  const p1 = parseFloat(cfg.price1) || calcSelected.sellPrice || 0;
-  const p2 = parseFloat(cfg.price2) || 0;
-
-  let html = '';
-  if (p1) html += `<div class="ps-row"><span>${q1} ${cfg.unit1} × ${fmt(p1)}</span><span class="ps-val">${fmt(q1*p1)}</span></div>`;
-  if (p2) html += `<div class="ps-row"><span>${q2} ${cfg.unit2} × ${fmt(p2)}</span><span class="ps-val">${fmt(q2*p2)}</span></div>`;
-
-  if (html) { rows.innerHTML = html; box.style.display = 'flex'; }
-  else box.style.display = 'none';
-}
-
-// ── Fill feature ─────────────────────────────────────────────
-// Since the extension runs in a sandboxed iframe, we can't directly access
-// parent window inputs. We use two strategies:
-// 1. postMessage to parent (Manager.io might relay)
-// 2. Show a prominent value the user can copy
-document.getElementById('fill-u1-btn').addEventListener('click', () => fillUnit(1));
-document.getElementById('fill-u2-btn').addEventListener('click', () => fillUnit(2));
-
-function fillUnit(unit) {
-  const cfg = calcSelected && dualConfig[calcSelected.key];
-  if (!cfg) return;
-  const inputId = unit === 1 ? 'calc-val-u1' : 'calc-val-u2';
-  const val = document.getElementById(inputId).value;
-  if (!val) { showToast('Enter a quantity first.'); return; }
-
-  // Try postMessage to parent
+window.addEventListener('message', function(ev) {
   try {
-    window.parent.postMessage({ type: 'manager-dual-fill', value: val }, '*');
-  } catch(e) {}
-
-  // Copy to clipboard as fallback
-  navigator.clipboard.writeText(val).then(() => {
-    showToast(`✓ ${val} ${unit===1?cfg.unit1:cfg.unit2} copied to clipboard — paste into the qty field`);
-  }).catch(() => {
-    showToast(`Value: ${val} — paste this into the quantity field`);
-  });
-}
-
-// ── Items tab ─────────────────────────────────────────────────
-document.getElementById('search-items').addEventListener('input', renderItemsTab);
-
-function renderItemsTab() {
-  const q = document.getElementById('search-items').value.toLowerCase();
-  const allItems = getAllItems();
-  const filtered = q ? allItems.filter(i => i.name.toLowerCase().includes(q) || (i.code||'').toLowerCase().includes(q)) : allItems;
-  const grid = document.getElementById('items-grid');
-
-  if (filtered.length === 0) {
-    grid.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No items found</div><div class="empty-sub">Try a different search or add a custom item.</div></div>`;
-    return;
-  }
-
-  grid.innerHTML = filtered.map(item => {
-    const cfg = dualConfig[item.key];
-    const hasDual = !!cfg;
-    const sub = hasDual
-      ? `1 ${cfg.unit1} = ${cfg.ratio} ${cfg.unit2}${cfg.price1?` · ${cfg.unit1}: ${fmt(cfg.price1)}`:''}${cfg.price2?` · ${cfg.unit2}: ${fmt(cfg.price2)}`:''}`
-      : (item.code ? `Code: ${item.code}` : 'No dual unit configured');
-    return `
-      <div class="item-row ${hasDual?'has-dual':''}" data-key="${esc(item.key)}">
-        <div class="item-info">
-          <div class="item-name">${esc(item.name)}</div>
-          <div class="item-sub">${esc(sub)}</div>
-        </div>
-        <div class="item-actions">
-          ${hasDual ? `<button class="btn-sm danger" data-action="remove" data-key="${esc(item.key)}">✕</button>` : ''}
-          <button class="btn-sm primary" data-action="edit" data-key="${esc(item.key)}" data-name="${esc(item.name)}">
-            ${hasDual ? '✏ Edit' : '⚖ Set'}
-          </button>
-          ${hasDual ? `<button class="btn-sm" data-action="use" data-key="${esc(item.key)}">▶ Use</button>` : ''}
-        </div>
-      </div>`;
-  }).join('');
-
-  grid.querySelectorAll('[data-action]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const { action, key, name } = btn.dataset;
-      if (action === 'edit') openEditForm(key, name || key);
-      if (action === 'remove') removeConfig(key);
-      if (action === 'use') useItem(key);
-    });
-  });
-}
-
-document.getElementById('add-custom-btn').addEventListener('click', () => {
-  const name = prompt('Enter a name for the custom item:');
-  if (!name || !name.trim()) return;
-  const key = 'custom_' + Date.now();
-  dualConfig[key] = { name: name.trim(), unit1: 'Box', unit2: 'Metre', ratio: 1, price1: 0, price2: 0 };
-  saveConfig();
-  renderItemsTab();
-  populateCalcDropdown();
-  openEditForm(key, name.trim());
+    debugLog.push({ time: now(), origin: ev.origin||'?', data: JSON.stringify(ev.data).slice(0,200) });
+    renderDebugLog();
+  } catch(e){}
 });
 
-function removeConfig(key) {
-  if (!confirm('Remove dual unit setting for this item?')) return;
-  delete dualConfig[key];
-  saveConfig();
-  renderItemsTab();
-  populateCalcDropdown();
-  if (calcSelected && calcSelected.key === key) updateCalcUI();
-  showToast('Dual unit removed.');
-}
-
-function useItem(key) {
-  const sel = document.getElementById('calc-item-select');
-  sel.value = key;
-  sel.dispatchEvent(new Event('change'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelector('[data-tab="calculator"]').classList.add('active');
-  document.getElementById('tab-calculator').classList.add('active');
-  showToast('Item loaded in Calculator.');
-}
-
-// ── Edit form ─────────────────────────────────────────────────
-function openEditForm(key, name) {
-  editingKey = key;
-  const cfg = dualConfig[key] || {};
-  document.getElementById('ef-item-name').textContent = name;
-  document.getElementById('ef-unit1').value = cfg.unit1 || 'Box';
-  document.getElementById('ef-unit2').value = cfg.unit2 || 'Metre';
-  document.getElementById('ef-ratio').value = cfg.ratio || '';
-  document.getElementById('ef-price1').value = cfg.price1 || '';
-  document.getElementById('ef-price2').value = cfg.price2 || '';
-  updateEfHint();
-  document.getElementById('edit-overlay').style.display = 'flex';
-  document.getElementById('ef-unit1').focus();
-}
-
-['ef-unit1','ef-unit2','ef-ratio'].forEach(id => {
-  document.getElementById(id).addEventListener('input', updateEfHint);
-});
-
-function updateEfHint() {
-  const u1 = document.getElementById('ef-unit1').value || 'Unit1';
-  const u2 = document.getElementById('ef-unit2').value || 'Unit2';
-  const r  = document.getElementById('ef-ratio').value || '?';
-  document.getElementById('ef-rh-u1').textContent = u1;
-  document.getElementById('ef-rh-ratio').textContent = r;
-  document.getElementById('ef-rh-u2').textContent = u2;
-  document.getElementById('ef-ratio-lbl').textContent = `${u2} per ${u1}`;
-  document.getElementById('ef-price1-lbl').textContent = u1;
-  document.getElementById('ef-price2-lbl').textContent = u2;
-}
-
-document.getElementById('ef-save').addEventListener('click', () => {
-  const u1 = document.getElementById('ef-unit1').value.trim();
-  const u2 = document.getElementById('ef-unit2').value.trim();
-  const r  = parseFloat(document.getElementById('ef-ratio').value);
-  const p1 = parseFloat(document.getElementById('ef-price1').value) || 0;
-  const p2 = parseFloat(document.getElementById('ef-price2').value) || 0;
-  if (!u1 || !u2 || isNaN(r) || r <= 0) { showToast('Fill in units and a valid ratio > 0.'); return; }
-
-  const existing = dualConfig[editingKey] || {};
-  dualConfig[editingKey] = { ...existing, unit1: u1, unit2: u2, ratio: r, price1: p1, price2: p2 };
-  saveConfig();
-  document.getElementById('edit-overlay').style.display = 'none';
-  renderItemsTab();
-  populateCalcDropdown();
-  if (calcSelected && calcSelected.key === editingKey) updateCalcUI();
-  showToast('Saved! ✓');
-});
-
-document.getElementById('ef-cancel').addEventListener('click', () => {
-  document.getElementById('edit-overlay').style.display = 'none';
-});
-
-// ── Invoice view ──────────────────────────────────────────────
-document.getElementById('load-invoice-btn').addEventListener('click', loadInvoiceItems);
-
-async function loadInvoiceItems() {
-  if (!ctx || !ctx.apiAccessToken) { showToast('Not connected to Manager.io yet.'); return; }
-  const area = document.getElementById('invoice-items-area');
-  area.innerHTML = '<div class="loading-bar"><div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Loading from Manager.io…</div>';
-
-  const base = ctx.apiEndpoint || '';
-  const headers = { 'Authorization': `Bearer ${ctx.apiAccessToken}` };
-
-  // Try to detect invoice key from current page URL
-  const pageUrl = ctx.currentPageUrl || ctx.placement || ctx.pageUrl || '';
-  const keyMatch = pageUrl.match(/([0-9a-f-]{20,})/i);
-
-  if (keyMatch) {
-    const key = keyMatch[1];
-    // Determine form type from URL, try each
-    const candidates = [
-      `${base}/sales-invoice/${key}`,
-      `${base}/purchase-invoice/${key}`,
-      `${base}/cash-receipt/${key}`,
-      `${base}/delivery-note/${key}`,
-    ];
-    for (const url of candidates) {
-      try {
-        const res = await fetch(url, { headers });
-        if (!res.ok) continue;
-        const inv = await res.json();
-        const lines = inv.lines || inv.lineItems || inv.LineItems || inv.items || [];
-        renderInvoiceLines(area, lines, inv.reference || inv.invoiceNumber || inv.number || 'Invoice');
-        return;
-      } catch(e) {}
-    }
-  }
-
-  // Fallback: load most recent sales invoices batch
-  await loadRecentInvoices(area, base, headers);
-}
-
-async function loadRecentInvoices(area, base, headers) {
-  try {
-    const res = await fetch(`${base}/sales-invoice-batch`, { headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const invoices = Array.isArray(data) ? data : (data.data || data.items || []);
-    if (!invoices.length) throw new Error('No invoices');
-    const first = invoices[0];
-    const lines = first.lines || first.lineItems || first.LineItems || first.items || [];
-    renderInvoiceLines(area, lines, first.reference || first.number || 'Latest Invoice');
-  } catch(e) {
-    area.innerHTML = `<div class="empty-state">
-      <div class="empty-icon">🧾</div>
-      <div class="empty-title">Open an invoice first</div>
-      <div class="empty-sub">Navigate to a specific Sales Invoice, Purchase Invoice, or Receipt in Manager.io, then click Load to see line items with dual units.</div>
-    </div>`;
-  }
-}
-
-function renderInvoiceLines(area, lines, title) {
-  if (!lines || lines.length === 0) {
-    area.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No line items</div><div class="empty-sub">This invoice appears to have no line items.</div></div>`;
-    return;
-  }
-
-  const rows = lines.map(line => {
-    const name = line.description || line.name || line.item || line.inventoryItem || 'Item';
-    const qty = parseFloat(line.quantity || line.qty || 0);
-    const price = parseFloat(line.unitPrice || line.price || line.rate || 0);
-
-    // Find matching item config
-    const matchedItem = getAllItems().find(it =>
-      it.name.toLowerCase() === name.toLowerCase() ||
-      name.toLowerCase().includes(it.name.toLowerCase())
-    );
-    const cfg = matchedItem ? dualConfig[matchedItem.key] : null;
-
-    if (!cfg) {
-      return `<div class="inv-item-row">
-        <div class="inv-item-top">
-          <div class="inv-item-name">${esc(name)}</div>
-          <span class="inv-no-dual">No dual unit</span>
-        </div>
-        <div style="font-size:11.5px;color:var(--gray-500);margin-top:4px">Qty: ${qty}${price?` · Unit price: ${fmt(price)}`:''}${qty&&price?` · Total: ${fmt(qty*price)}`:''}</div>
-      </div>`;
-    }
-
-    const u2qty = rd(qty * cfg.ratio);
-    const p1 = cfg.price1 || price || 0;
-    const p2 = cfg.price2 || 0;
-
-    return `<div class="inv-item-row has-dual" style="border-left:3px solid var(--navy)">
-      <div class="inv-item-top">
-        <div class="inv-item-name">${esc(name)}</div>
-        <span class="tag tag-blue">⚖ Dual</span>
-      </div>
-      <div class="inv-dual-info">
-        <div class="inv-unit-box">
-          <div class="inv-unit-label">${esc(cfg.unit1)}</div>
-          <div class="inv-unit-val">${qty}</div>
-          ${p1?`<div class="inv-unit-price">${fmt(p1)} ea · ${fmt(qty*p1)} total</div>`:''}
-        </div>
-        <div class="inv-unit-box">
-          <div class="inv-unit-label">${esc(cfg.unit2)}</div>
-          <div class="inv-unit-val">${u2qty}</div>
-          ${p2?`<div class="inv-unit-price">${fmt(p2)} ea · ${fmt(u2qty*p2)} total</div>`:''}
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  area.innerHTML = `<div style="font-size:11.5px;color:var(--gray-500);margin-bottom:8px">📋 ${esc(title)}</div><div class="invoice-items-list">${rows}</div>`;
-}
-
-// ── Debug panel ──────────────────────────────────────────────
 function renderDebugLog() {
-  var el = document.getElementById('debug-log');
+  var el  = document.getElementById('debug-log');
   var cnt = document.getElementById('debug-count');
   if (!el) return;
-  if (debugLog.length === 0) return;
-  cnt.textContent = debugLog.length + ' message(s) received';
-  cnt.style.color = '#22c55e';
-  el.innerHTML = debugLog.slice(-6).map(function(m) {
-    var color = m.data.includes('manager-context') ? '#4ade80' : '#94A3B8';
-    return '<div style="margin-bottom:4px;color:' + color + '">' +
-      '<span style="color:#475569">[' + m.time + ']</span> ' +
-      '<span style="color:#60a5fa">' + escHtml(m.origin) + '</span> ' +
-      escHtml(m.data) +
-      '</div>';
+  cnt.textContent = debugLog.length + ' received';
+  if (debugLog.length > 0) cnt.style.color = '#22c55e';
+  el.innerHTML = debugLog.slice(-5).map(function(m) {
+    var c = m.data.includes('✓') ? '#4ade80' : '#94A3B8';
+    return '<div style="color:'+c+';margin-bottom:3px"><span style="color:#475569">['+m.time+']</span> '+escHtml(m.data)+'</div>';
   }).join('');
   el.scrollTop = el.scrollHeight;
 }
 
 function showConnectError(e) {
   var el = document.getElementById('debug-error');
-  if (!el) return;
-  el.style.display = 'block';
-  el.innerHTML = '<strong>⚠ Error in onContextReceived:</strong><br>' + escHtml(String(e));
+  if (el) { el.style.display='block'; el.innerHTML='<strong>Error:</strong> '+escHtml(String(e)); }
 }
 
-// ── Utilities ─────────────────────────────────────────────────
-function rd(n) { return Math.round(n * 100000) / 100000; }
-function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// ── Launch the app ─────────────────────────────────────────────
+function launchApp() {
+  var cv = document.getElementById('connecting-view');
+  var av = document.getElementById('app-view');
+  if (cv) cv.style.display = 'none';
+  if (av) av.style.display = 'block';
 
-let toastTimer;
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
-}
-
-// ── Connection tab UI ────────────────────────────────────────
-document.querySelectorAll('.conn-tab').forEach(function(btn) {
-  btn.addEventListener('click', function() {
-    var target = btn.dataset.connTab;
-    document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
-    document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
-    btn.classList.add('active');
-    var panel = document.getElementById('conn-' + target);
-    if (panel) panel.classList.add('active');
-  });
-});
-
-// ── Manual connect ────────────────────────────────────────────
-var MC_STORE = 'mgr_manual_conn_v1';
-
-function loadSavedCreds() {
-  try {
-    var saved = JSON.parse(localStorage.getItem(MC_STORE));
-    if (saved && saved.endpoint && saved.token) {
-      document.getElementById('mc-endpoint').value = saved.endpoint;
-      document.getElementById('mc-token').value = saved.token;
-      document.getElementById('mc-saved-pill').style.display = 'flex';
-      return saved;
-    }
-  } catch(e) {}
-  return null;
-}
-
-function saveCreds(endpoint, token) {
-  try { localStorage.setItem(MC_STORE, JSON.stringify({ endpoint: endpoint, token: token })); } catch(e) {}
-}
-
-document.getElementById('mc-connect-btn').addEventListener('click', function() {
-  var endpoint = (document.getElementById('mc-endpoint').value || '').trim().replace(/\/+$/, '');
-  var token    = (document.getElementById('mc-token').value || '').trim();
-  var errEl    = document.getElementById('mc-error');
-  errEl.style.display = 'none';
-
-  if (!endpoint) { errEl.textContent = 'Please enter the API Endpoint URL.'; errEl.style.display = 'block'; return; }
-  if (!token)    { errEl.textContent = 'Please enter the API Access Token.'; errEl.style.display = 'block'; return; }
-
-  // Note: We cannot test the connection here because browsers block
-  // cross-origin API calls (CORS). We save credentials and attempt
-  // the real connection when loading inventory inside Manager.io's iframe.
-  if (document.getElementById('mc-remember').checked) saveCreds(endpoint, token);
-  ctxReceived = true;
-  ctx = { apiEndpoint: endpoint, apiAccessToken: token, currentPageUrl: '/manual', businessName: 'Your Business' };
-  try { onContextReceived(); } catch(e) { showConnectError(e); }
-});
-
-// ── Demo connect ──────────────────────────────────────────────
-document.getElementById('demo-connect-btn').addEventListener('click', function() {
-  ctxReceived = true;
-  ctx = { apiEndpoint: null, apiAccessToken: null, currentPageUrl: '/demo', businessName: 'Demo Business' };
-  try { onContextReceived(); } catch(e) { showConnectError(e); }
-});
-
-// ── Startup: detect context and connect ────────────────────────
-(function() {
-  var saved = loadSavedCreds();
-  var inIframe = (window.self !== window.top);
-
-  function switchToTab(name) {
-    document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
-    document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
-    var tab = document.querySelector('[data-conn-tab="' + name + '"]');
-    var panel = document.getElementById('conn-' + name);
-    if (tab) tab.classList.add('active');
-    if (panel) panel.classList.add('active');
-  }
-
-  if (inIframe) {
-    // ── Inside an iframe (likely Manager.io) ──────────────────────────────
-    // Give postMessage 2s to fire. If it doesn't, use saved credentials.
-    setTimeout(function() {
-      if (ctxReceived) return;
-      if (saved) {
-        ctxReceived = true;
-        ctx = {
-          apiEndpoint:    saved.endpoint,
-          apiAccessToken: saved.token,
-          currentPageUrl: 'Manager.io (iframe)',
-          businessName:   'Your Business'
-        };
-        try { onContextReceived(); } catch(e) { showConnectError(e); }
-      } else {
-        // No saved creds — switch to manual tab
-        switchToTab('manual');
-        showToast('Please enter your Manager.io credentials');
-      }
-    }, 2000);
-
+  // Status pill
+  var dot  = document.getElementById('status-dot');
+  var text = document.getElementById('status-text');
+  if (appMode === 'live') {
+    if (dot)  { dot.className='status-dot connected'; dot.style.background=''; }
+    if (text) text.textContent = 'Connected ✓';
+  } else if (appMode === 'manual') {
+    if (dot)  { dot.className='status-dot'; dot.style.background='#F97316'; }
+    if (text) text.textContent = 'Manual credentials';
   } else {
-    // ── Opened directly in a browser tab ─────────────────────────────────
-    // postMessage will NEVER fire here. Skip the waiting screen entirely.
-    if (saved) {
-      // Has saved creds — connect immediately (will show CORS error in items,
-      // but calculator/items config work fine)
-      ctxReceived = true;
-      ctx = {
-        apiEndpoint:    saved.endpoint,
-        apiAccessToken: saved.token,
-        currentPageUrl: 'Standalone (browser tab)',
-        businessName:   'Your Business'
-      };
-      try { onContextReceived(); } catch(e) { showConnectError(e); }
-    } else {
-      // No saved creds — go straight to Demo so user can use the app
-      // Show a banner explaining the situation, but don't block them
-      setTimeout(function() {
-        if (ctxReceived) return;
-        ctxReceived = true;
-        ctx = {
-          apiEndpoint: null, apiAccessToken: null,
-          currentPageUrl: 'Standalone (browser tab)',
-          businessName: 'Demo'
-        };
-        try { onContextReceived(); } catch(e) { showConnectError(e); }
-      }, 2500);
+    if (dot)  { dot.className='status-dot'; dot.style.background='#FCD34D'; }
+    if (text) text.textContent = 'Demo Mode';
+  }
+
+  // Context banner
+  var placement = (ctx && (ctx.currentPageUrl||ctx.placement||ctx.page||ctx.path)) || appMode;
+  var business  = (ctx && (ctx.businessName||ctx.business||ctx.name)) || '';
+  var pl = document.getElementById('ctx-page-label');
+  var bl = document.getElementById('ctx-business-label');
+  if (pl) pl.textContent = placement;
+  if (bl && business) bl.textContent = business;
+
+  // Orange banner if running standalone
+  if (appMode !== 'live') {
+    var banner = document.getElementById('ctx-banner');
+    if (banner) {
+      banner.style.cssText = 'background:#FFF7ED;border-color:#FED7AA;color:#C2410C;padding:10px 14px;border-radius:8px;border:1px solid;display:flex;align-items:flex-start;gap:10px;font-size:12px;margin-bottom:4px';
+      var msg = appMode === 'demo'
+        ? '⚠ Demo mode — add items manually in the Items tab. Inventory auto-load needs Manager.io connection.'
+        : '⚠ Manual credentials — calculator works. Inventory loads inside Manager.io\'s iframe.';
+      banner.innerHTML = '<div>'+msg+'</div>';
     }
   }
-})();
 
-// ── Override fetchInventoryItems for demo/manual mode ─────────
-var _realFetch = fetchInventoryItems;
-fetchInventoryItems = function() {
-  if (!ctx || !ctx.apiEndpoint || !ctx.apiAccessToken) {
-    // Demo mode
+  loadInventory();
+}
+
+// ── Startup sequence ───────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  setupConnectUI();
+  setupTabUI();
+  setupCalcUI();
+  setupItemsUI();
+  setupInvoiceUI();
+
+  // Auto-launch after 3s if no context received
+  setTimeout(function() {
+    if (ctxReceived) return;
+    var saved = loadCreds();
+    if (saved) {
+      // Use saved credentials
+      appMode = 'manual';
+      ctx = { apiEndpoint: saved.endpoint, apiAccessToken: saved.token,
+               currentPageUrl: 'Manual', businessName: 'Your Business' };
+    } else {
+      // Fall back to demo
+      appMode = 'demo';
+      ctx = { apiEndpoint: null, apiAccessToken: null,
+               currentPageUrl: 'Demo', businessName: 'Demo' };
+    }
+    ctxReceived = true;
+    launchApp();
+  }, 3000);
+
+  // Pre-fill saved credentials in manual connect form
+  var saved = loadCreds();
+  if (saved) {
+    var epEl = document.getElementById('mc-endpoint');
+    var tkEl = document.getElementById('mc-token');
+    var pill = document.getElementById('mc-saved-pill');
+    if (epEl) epEl.value = saved.endpoint || '';
+    if (tkEl) tkEl.value = saved.token    || '';
+    if (pill) pill.style.display = 'flex';
+  }
+});
+
+// ── Connect UI ─────────────────────────────────────────────────
+function setupConnectUI() {
+  // Tab switching on connecting screen
+  document.querySelectorAll('.conn-tab').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.conn-tab').forEach(function(b){ b.classList.remove('active'); });
+      document.querySelectorAll('.conn-panel').forEach(function(p){ p.classList.remove('active'); });
+      btn.classList.add('active');
+      var panel = document.getElementById('conn-'+btn.dataset.connTab);
+      if (panel) panel.classList.add('active');
+    });
+  });
+
+  // Manual connect button
+  var mcBtn = document.getElementById('mc-connect-btn');
+  if (mcBtn) mcBtn.addEventListener('click', function() {
+    var ep  = (document.getElementById('mc-endpoint').value||'').trim().replace(/\/+$/,'');
+    var tok = (document.getElementById('mc-token').value||'').trim();
+    var err = document.getElementById('mc-error');
+    if (err) err.style.display = 'none';
+    if (!ep)  { if(err){err.textContent='Enter endpoint URL.'; err.style.display='block';} return; }
+    if (!tok) { if(err){err.textContent='Enter access token.'; err.style.display='block';} return; }
+    if (document.getElementById('mc-remember').checked) saveCreds(ep, tok);
+    appMode = 'manual';
+    ctx = { apiEndpoint: ep, apiAccessToken: tok, currentPageUrl: 'Manual', businessName: 'Your Business' };
+    ctxReceived = true;
+    launchApp();
+  });
+
+  // Demo button
+  var demoBtn = document.getElementById('demo-connect-btn');
+  if (demoBtn) demoBtn.addEventListener('click', function() {
+    appMode = 'demo';
+    ctx = { apiEndpoint: null, apiAccessToken: null, currentPageUrl: 'Demo', businessName: 'Demo' };
+    ctxReceived = true;
+    launchApp();
+  });
+}
+
+// ── App tab switching ──────────────────────────────────────────
+function setupTabUI() {
+  document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+      document.querySelectorAll('.tab-pane').forEach(function(p){ p.classList.remove('active'); });
+      btn.classList.add('active');
+      var pane = document.getElementById('tab-'+btn.dataset.tab);
+      if (pane) pane.classList.add('active');
+    });
+  });
+}
+
+// ── Load inventory ─────────────────────────────────────────────
+function loadInventory() {
+  var loadEl = document.getElementById('items-loading');
+
+  if (appMode === 'demo' || !ctx || !ctx.apiEndpoint || !ctx.apiAccessToken) {
+    // Demo items
     inventoryItems = [
-      { key: 'tile_6060', name: '60x60 Tiles',     code: 'T-6060', buyPrice: 45, sellPrice: 50 },
-      { key: 'tile_3060', name: '30x60 Tiles',     code: 'T-3060', buyPrice: 30, sellPrice: 35 },
-      { key: 'cement_50', name: 'Cement Bag 50kg',  code: 'C-001',  buyPrice: 8,  sellPrice: 10 },
-      { key: 'paint_5l',  name: 'Paint (5L Tin)',   code: 'P-5L',   buyPrice: 22, sellPrice: 28 },
-      { key: 'marble_sl', name: 'Marble Slab',      code: 'M-001',  buyPrice: 90, sellPrice: 110 },
+      { key:'tile_6060', name:'60x60 Tiles',     code:'T-6060', buyPrice:45, sellPrice:50 },
+      { key:'tile_3060', name:'30x60 Tiles',     code:'T-3060', buyPrice:30, sellPrice:35 },
+      { key:'cement',    name:'Cement Bag 50kg', code:'C-001',  buyPrice:8,  sellPrice:10 },
+      { key:'paint_5l',  name:'Paint (5L Tin)',  code:'P-5L',   buyPrice:22, sellPrice:28 },
+      { key:'marble',    name:'Marble Slab',     code:'M-001',  buyPrice:90, sellPrice:110 },
     ];
-    document.getElementById('items-loading').style.display = 'none';
+    if (loadEl) loadEl.style.display = 'none';
     renderItemsTab();
     populateCalcDropdown();
-    showToast('Demo mode — sample items loaded');
-    return Promise.resolve();
+    return;
   }
-  return _realFetch();
-};
+
+  // Live API fetch
+  if (loadEl) {
+    loadEl.style.display = 'flex';
+    loadEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div> <span>Loading from Manager.io…</span>';
+  }
+
+  var base    = ctx.apiEndpoint.replace(/\/+$/,'');
+  var headers = { 'Authorization': 'Bearer ' + ctx.apiAccessToken };
+
+  // Auto-discover business key if base ends in /api2
+  var fetchChain = Promise.resolve(base);
+  if (/\/api2\s*$/i.test(base)) {
+    fetchChain = fetch(base, { headers: headers })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d) return base;
+        var list = Array.isArray(d) ? d : (d.businesses || d.data || [d]);
+        var biz  = list[0] || {};
+        var key  = biz.key || biz.Key || biz.id || biz.Id || '';
+        if (key) {
+          var nb = base + '/' + key;
+          ctx.apiEndpoint = nb;
+          saveCreds(nb, ctx.apiAccessToken);
+          ctx.businessName = biz.name || biz.Name || 'Your Business';
+          var bl = document.getElementById('ctx-business-label');
+          if (bl) bl.textContent = ctx.businessName;
+          return nb;
+        }
+        return base;
+      })
+      .catch(function(){ return base; });
+  }
+
+  fetchChain.then(function(resolvedBase) {
+    var urls = [
+      resolvedBase + '/inventory-item-batch',
+      resolvedBase + '/InventoryItem-batch',
+      resolvedBase + '/inventory-items',
+    ];
+    return tryFetchEndpoints(urls, headers);
+  }).then(function(items) {
+    if (loadEl) loadEl.style.display = 'none';
+    if (items && items.length > 0) {
+      inventoryItems = items;
+      renderItemsTab();
+      populateCalcDropdown();
+      showToast('✓ ' + items.length + ' items loaded');
+    } else {
+      showInventoryError('No items returned. Check your endpoint includes the business key.<br>Format: <code>http://localhost:PORT/api2/BUSINESS_KEY</code>');
+    }
+  }).catch(function(err) {
+    if (loadEl) loadEl.style.display = 'none';
+    var msg = String(err);
+    var isCors = msg.includes('fetch') || msg.includes('Failed') || msg.includes('NetworkError');
+    if (isCors) {
+      showInventoryError('Browser blocked the API call (CORS/mixed content). ' +
+        'This is normal outside Manager.io. Your credentials are saved — ' +
+        'they will be used automatically when the extension loads inside Manager.io.');
+    } else {
+      showInventoryError('API error: ' + msg);
+    }
+  });
+}
+
+function tryFetchEndpoints(urls, headers) {
+  var idx = 0;
+  function next() {
+    if (idx >= urls.length) return Promise.reject(new Error('All endpoints failed'));
+    var url = urls[idx++];
+    return fetch(url, { headers: headers }).then(function(r) {
+      if (!r.ok) return next();
+      return r.json().then(function(d) {
+        var items = Array.isArray(d) ? d : (d.data || d.items || []);
+        if (items.length === 0) return next();
+        return items.map(function(it) {
+          return {
+            key:       it.key||it.Key||it.id||it.Id||String(Math.random()),
+            name:      it.name||it.Name||it.itemName||it.ItemName||it.description||'',
+            code:      it.code||it.Code||it.itemCode||'',
+            buyPrice:  parseFloat(it.purchasePrice||it.PurchasePrice||it.buyPrice||0)||0,
+            sellPrice: parseFloat(it.salesPrice||it.SalesPrice||it.salePrice||it.sellPrice||0)||0,
+          };
+        }).filter(function(it){ return it.name; });
+      });
+    }).catch(function() { return next(); });
+  }
+  return next();
+}
+
+function showInventoryError(msg) {
+  var el = document.getElementById('items-loading');
+  if (!el) return;
+  el.style.display = 'block';
+  el.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px;line-height:1.7;width:100%">'+msg+'</div>';
+}
+
+// ── Calculator ─────────────────────────────────────────────────
+function setupCalcUI() {
+  var selItem = document.getElementById('calc-item-select');
+  var v1      = document.getElementById('calc-val-u1');
+  var v2      = document.getElementById('calc-val-u2');
+  var fb1     = document.getElementById('fill-u1-btn');
+  var fb2     = document.getElementById('fill-u2-btn');
+
+  if (selItem) selItem.addEventListener('change', function() {
+    calcSelected = getAllItems().find(function(i){ return i.key === selItem.value; }) || null;
+    updateCalcUI();
+  });
+  if (v1) v1.addEventListener('input', function() {
+    var cfg = calcSelected && dualConfig[calcSelected.key];
+    if (!cfg) return;
+    var val = parseFloat(v1.value);
+    if (!isNaN(val) && v2) v2.value = rd(val * cfg.ratio);
+    updatePriceSummary();
+  });
+  if (v2) v2.addEventListener('input', function() {
+    var cfg = calcSelected && dualConfig[calcSelected.key];
+    if (!cfg) return;
+    var val = parseFloat(v2.value);
+    if (!isNaN(val) && v1) v1.value = rd(val / cfg.ratio);
+    updatePriceSummary();
+  });
+  if (fb1) fb1.addEventListener('click', function() { fillUnit(1); });
+  if (fb2) fb2.addEventListener('click', function() { fillUnit(2); });
+}
+
+function populateCalcDropdown() {
+  var sel   = document.getElementById('calc-item-select');
+  var cnt   = document.getElementById('calc-items-count');
+  if (!sel) return;
+  var all   = getAllItems();
+  if (cnt) { cnt.textContent = all.length + ' items'; cnt.className = 'tag tag-blue'; }
+  sel.innerHTML = '<option value="">— Select an inventory item —</option>' +
+    all.map(function(it) {
+      var hasDual = !!dualConfig[it.key];
+      return '<option value="'+escHtml(it.key)+'">'+(hasDual?'⚖ ':'')+escHtml(it.name)+(it.code?' ('+escHtml(it.code)+')':'')+'</option>';
+    }).join('');
+  if (calcSelected) sel.value = calcSelected.key;
+}
+
+function getAllItems() {
+  var custom = Object.keys(dualConfig)
+    .filter(function(k){ return k.indexOf('custom_')===0; })
+    .map(function(k){ return { key:k, name:dualConfig[k].name||k, code:'', buyPrice:0, sellPrice:0 }; });
+  return inventoryItems.concat(custom);
+}
+
+function updateCalcUI() {
+  var body   = document.getElementById('calc-body');
+  var empty  = document.getElementById('calc-empty');
+  var noDual = document.getElementById('calc-no-dual');
+  if (!calcSelected) {
+    if(body) body.style.display='none';
+    if(empty) empty.style.display='block';
+    if(noDual) noDual.style.display='none';
+    return;
+  }
+  var cfg = dualConfig[calcSelected.key];
+  if (!cfg) {
+    if(body) body.style.display='none';
+    if(empty) empty.style.display='none';
+    if(noDual) noDual.style.display='block';
+    return;
+  }
+  if(body) body.style.display='block';
+  if(empty) empty.style.display='none';
+  if(noDual) noDual.style.display='none';
+
+  setText('ratio-badge',   '1 '+cfg.unit1+' = '+cfg.ratio+' '+cfg.unit2);
+  setText('calc-lbl-u1',   cfg.unit1);
+  setText('calc-lbl-u2',   cfg.unit2);
+  setText('calc-badge-u1', cfg.unit1);
+  setText('calc-badge-u2', cfg.unit2);
+  setText('fill-lbl-u1',   cfg.unit1);
+  setText('fill-lbl-u2',   cfg.unit2);
+
+  var p1 = cfg.price1 || (calcSelected && calcSelected.sellPrice) || 0;
+  var p2 = cfg.price2 || 0;
+  setText('calc-ph1', p1 ? '@ '+fmt(p1)+' / '+cfg.unit1 : '');
+  setText('calc-ph2', p2 ? '@ '+fmt(p2)+' / '+cfg.unit2 : '');
+
+  var v1 = document.getElementById('calc-val-u1');
+  var v2 = document.getElementById('calc-val-u2');
+  if(v1) v1.value = '';
+  if(v2) v2.value = '';
+  updatePriceSummary();
+}
+
+function updatePriceSummary() {
+  var box  = document.getElementById('price-summary');
+  var rows = document.getElementById('ps-rows');
+  var cfg  = calcSelected && dualConfig[calcSelected.key];
+  if (!box || !cfg) { if(box) box.style.display='none'; return; }
+  var v1 = parseFloat((document.getElementById('calc-val-u1')||{}).value);
+  var v2 = parseFloat((document.getElementById('calc-val-u2')||{}).value);
+  if (isNaN(v1) && isNaN(v2)) { box.style.display='none'; return; }
+  var q1 = isNaN(v1) ? rd((v2||0)/cfg.ratio) : v1;
+  var q2 = isNaN(v2) ? rd((v1||0)*cfg.ratio)  : v2;
+  var p1 = parseFloat(cfg.price1)||(calcSelected&&calcSelected.sellPrice)||0;
+  var p2 = parseFloat(cfg.price2)||0;
+  var html = '';
+  if (p1) html += '<div class="ps-row"><span>'+q1+' '+escHtml(cfg.unit1)+' × '+fmt(p1)+'</span><span class="ps-val">'+fmt(q1*p1)+'</span></div>';
+  if (p2) html += '<div class="ps-row"><span>'+q2+' '+escHtml(cfg.unit2)+' × '+fmt(p2)+'</span><span class="ps-val">'+fmt(q2*p2)+'</span></div>';
+  if (html) { if(rows) rows.innerHTML=html; box.style.display='flex'; }
+  else box.style.display='none';
+}
+
+function fillUnit(unit) {
+  var cfg = calcSelected && dualConfig[calcSelected.key];
+  if (!cfg) { showToast('Select an item first.'); return; }
+  var el  = document.getElementById(unit===1 ? 'calc-val-u1' : 'calc-val-u2');
+  var val = el && el.value;
+  if (!val) { showToast('Enter a quantity first.'); return; }
+  try {
+    window.parent.postMessage({ type:'manager-dual-fill', value:val }, '*');
+  } catch(e) {}
+  navigator.clipboard.writeText(val).then(function() {
+    showToast('✓ '+val+' '+(unit===1?cfg.unit1:cfg.unit2)+' copied — paste into qty field');
+  }).catch(function() {
+    showToast('Value: '+val+' — paste into the qty field');
+  });
+}
+
+// ── Items tab ──────────────────────────────────────────────────
+function setupItemsUI() {
+  var search = document.getElementById('search-items');
+  if (search) search.addEventListener('input', renderItemsTab);
+
+  var addBtn = document.getElementById('add-custom-btn');
+  if (addBtn) addBtn.addEventListener('click', function() {
+    var name = prompt('Enter item name:');
+    if (!name || !name.trim()) return;
+    var key = 'custom_'+Date.now();
+    dualConfig[key] = { name:name.trim(), unit1:'Box', unit2:'Metre', ratio:1, price1:0, price2:0 };
+    saveConfig();
+    renderItemsTab();
+    populateCalcDropdown();
+    openEditForm(key, name.trim());
+  });
+
+  var saveBtn   = document.getElementById('ef-save');
+  var cancelBtn = document.getElementById('ef-cancel');
+  if (saveBtn)   saveBtn.addEventListener('click',   saveItemForm);
+  if (cancelBtn) cancelBtn.addEventListener('click', function() {
+    document.getElementById('edit-overlay').style.display = 'none';
+  });
+
+  ['ef-unit1','ef-unit2','ef-ratio'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateEfHint);
+  });
+}
+
+function renderItemsTab() {
+  var q    = ((document.getElementById('search-items')||{}).value||'').toLowerCase();
+  var all  = getAllItems();
+  var list = q ? all.filter(function(i){ return (i.name+' '+(i.code||'')).toLowerCase().includes(q); }) : all;
+  var grid = document.getElementById('items-grid');
+  if (!grid) return;
+
+  if (list.length === 0) {
+    grid.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No items found</div><div class="empty-sub">Try a different search or add a custom item.</div></div>';
+    return;
+  }
+  grid.innerHTML = list.map(function(item) {
+    var cfg    = dualConfig[item.key];
+    var hasDual = !!cfg;
+    var sub    = hasDual
+      ? '1 '+escHtml(cfg.unit1)+' = '+cfg.ratio+' '+escHtml(cfg.unit2)+(cfg.price1?' · '+fmt(cfg.price1)+'/'+escHtml(cfg.unit1):'')+(cfg.price2?' · '+fmt(cfg.price2)+'/'+escHtml(cfg.unit2):'')
+      : (item.code ? 'Code: '+escHtml(item.code) : 'No dual unit set');
+    return '<div class="item-row '+(hasDual?'has-dual':'')+'">' +
+      '<div class="item-info"><div class="item-name">'+escHtml(item.name)+'</div><div class="item-sub">'+sub+'</div></div>' +
+      '<div class="item-actions">' +
+        (hasDual?'<button class="btn-sm danger" onclick="removeItemConfig(\''+escHtml(item.key)+'\')">✕</button>':'') +
+        '<button class="btn-sm primary" onclick="openEditForm(\''+escHtml(item.key)+'\',\''+escHtml(item.name)+'\')">'+(hasDual?'✏ Edit':'⚖ Set Dual')+'</button>' +
+        (hasDual?'<button class="btn-sm" onclick="useItem(\''+escHtml(item.key)+'\')">▶ Use</button>':'') +
+      '</div></div>';
+  }).join('');
+}
+
+function removeItemConfig(key) {
+  if (!confirm('Remove dual unit for this item?')) return;
+  delete dualConfig[key];
+  saveConfig();
+  renderItemsTab();
+  populateCalcDropdown();
+  if (calcSelected && calcSelected.key === key) { calcSelected=null; updateCalcUI(); }
+  showToast('Removed.');
+}
+
+function useItem(key) {
+  var sel = document.getElementById('calc-item-select');
+  if (sel) { sel.value = key; sel.dispatchEvent(new Event('change')); }
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.querySelectorAll('.tab-pane').forEach(function(p){ p.classList.remove('active'); });
+  var tb = document.querySelector('[data-tab="calculator"]');
+  var tp = document.getElementById('tab-calculator');
+  if (tb) tb.classList.add('active');
+  if (tp) tp.classList.add('active');
+  showToast('Item loaded in Calculator.');
+}
+
+// ── Item edit form ─────────────────────────────────────────────
+function openEditForm(key, name) {
+  editingKey = key;
+  var cfg = dualConfig[key] || {};
+  setVal('ef-unit1',  cfg.unit1  || 'Box');
+  setVal('ef-unit2',  cfg.unit2  || 'Metre');
+  setVal('ef-ratio',  cfg.ratio  || '');
+  setVal('ef-price1', cfg.price1 || '');
+  setVal('ef-price2', cfg.price2 || '');
+  setText('ef-item-name', name);
+  updateEfHint();
+  var ov = document.getElementById('edit-overlay');
+  if (ov) ov.style.display = 'flex';
+}
+
+function updateEfHint() {
+  var u1 = (document.getElementById('ef-unit1')||{}).value || 'Unit1';
+  var u2 = (document.getElementById('ef-unit2')||{}).value || 'Unit2';
+  var r  = (document.getElementById('ef-ratio') ||{}).value || '?';
+  setText('ef-rh-u1',    u1);
+  setText('ef-rh-ratio', r);
+  setText('ef-rh-u2',    u2);
+  setText('ef-ratio-lbl',    u2+' per '+u1);
+  setText('ef-price1-lbl',   u1);
+  setText('ef-price2-lbl',   u2);
+}
+
+function saveItemForm() {
+  var u1 = ((document.getElementById('ef-unit1')||{}).value||'').trim();
+  var u2 = ((document.getElementById('ef-unit2')||{}).value||'').trim();
+  var r  = parseFloat((document.getElementById('ef-ratio')||{}).value);
+  var p1 = parseFloat((document.getElementById('ef-price1')||{}).value)||0;
+  var p2 = parseFloat((document.getElementById('ef-price2')||{}).value)||0;
+  if (!u1||!u2||isNaN(r)||r<=0) { showToast('Fill in all fields with a valid ratio > 0.'); return; }
+  var existing = dualConfig[editingKey] || {};
+  dualConfig[editingKey] = Object.assign({}, existing, { unit1:u1, unit2:u2, ratio:r, price1:p1, price2:p2 });
+  saveConfig();
+  var ov = document.getElementById('edit-overlay');
+  if (ov) ov.style.display = 'none';
+  renderItemsTab();
+  populateCalcDropdown();
+  if (calcSelected && calcSelected.key === editingKey) updateCalcUI();
+  showToast('Saved ✓');
+}
+
+// ── Invoice view ───────────────────────────────────────────────
+function setupInvoiceUI() {
+  var btn = document.getElementById('load-invoice-btn');
+  if (btn) btn.addEventListener('click', loadInvoiceItems);
+}
+
+function loadInvoiceItems() {
+  if (!ctx || !ctx.apiAccessToken) { showToast('Not connected.'); return; }
+  var area = document.getElementById('invoice-items-area');
+  if (area) area.innerHTML = '<div class="loading-bar"><div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Loading…</div>';
+  var base    = (ctx.apiEndpoint||'').replace(/\/+$/,'');
+  var headers = { 'Authorization':'Bearer '+ctx.apiAccessToken };
+  fetch(base+'/sales-invoice-batch', { headers:headers })
+    .then(function(r){ return r.ok ? r.json() : Promise.reject('HTTP '+r.status); })
+    .then(function(d) {
+      var invoices = Array.isArray(d) ? d : (d.data||d.items||[]);
+      if (!invoices.length) { if(area) area.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No invoices</div></div>'; return; }
+      var first = invoices[0];
+      var lines = first.lines||first.lineItems||first.LineItems||first.items||[];
+      renderInvoiceLines(area, lines, first.reference||first.number||'Latest Invoice');
+    })
+    .catch(function(e) {
+      if(area) area.innerHTML='<div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Could not load</div><div class="empty-sub">'+escHtml(String(e))+'</div></div>';
+    });
+}
+
+function renderInvoiceLines(area, lines, title) {
+  if (!area) return;
+  if (!lines||!lines.length) { area.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No line items</div></div>'; return; }
+  var rows = lines.map(function(line) {
+    var name  = line.description||line.name||line.item||'Item';
+    var qty   = parseFloat(line.quantity||line.qty||0);
+    var price = parseFloat(line.unitPrice||line.price||line.rate||0);
+    var match = getAllItems().find(function(it){ return it.name.toLowerCase()===name.toLowerCase()||(name.toLowerCase().includes(it.name.toLowerCase())); });
+    var cfg   = match ? dualConfig[match.key] : null;
+    if (!cfg) return '<div class="inv-item-row"><div class="inv-item-top"><div class="inv-item-name">'+escHtml(name)+'</div><span class="inv-no-dual">No dual unit</span></div><div style="font-size:11.5px;color:var(--gray-500);margin-top:4px">Qty: '+qty+(price?' · Price: '+fmt(price):'')+'</div></div>';
+    var u2qty = rd(qty * cfg.ratio);
+    var p1=cfg.price1||price||0, p2=cfg.price2||0;
+    return '<div class="inv-item-row has-dual" style="border-left:3px solid var(--navy)"><div class="inv-item-top"><div class="inv-item-name">'+escHtml(name)+'</div><span class="tag tag-blue">⚖ Dual</span></div><div class="inv-dual-info"><div class="inv-unit-box"><div class="inv-unit-label">'+escHtml(cfg.unit1)+'</div><div class="inv-unit-val">'+qty+'</div>'+(p1?'<div class="inv-unit-price">'+fmt(p1)+' ea · '+fmt(qty*p1)+'</div>':'')+'</div><div class="inv-unit-box"><div class="inv-unit-label">'+escHtml(cfg.unit2)+'</div><div class="inv-unit-val">'+u2qty+'</div>'+(p2?'<div class="inv-unit-price">'+fmt(p2)+' ea · '+fmt(u2qty*p2)+'</div>':'')+'</div></div></div>';
+  }).join('');
+  area.innerHTML = '<div style="font-size:11.5px;color:var(--gray-500);margin-bottom:8px">📋 '+escHtml(title)+'</div><div class="invoice-items-list">'+rows+'</div>';
+}
+
+// ── Utilities ──────────────────────────────────────────────────
+function rd(n)    { return Math.round(n*100000)/100000; }
+function fmt(n)   { return Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function setText(id,v){ var el=document.getElementById(id); if(el) el.textContent=v; }
+function setVal(id,v) { var el=document.getElementById(id); if(el) el.value=v; }
+
+var toastTimer;
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
 </script>
 </body>
 </html>
