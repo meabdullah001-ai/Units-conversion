@@ -708,7 +708,7 @@ function onContextReceived() {
 async function fetchInventoryItems() {
   if (!ctx) return;
 
-  const base  = ctx.apiEndpoint || '';
+  const base  = (ctx.apiEndpoint || '').replace(/\/+$/, '');
   const token = ctx.apiAccessToken || '';
 
   if (!base || !token) {
@@ -718,33 +718,84 @@ async function fetchInventoryItems() {
     return;
   }
 
-  document.getElementById('items-loading').style.display = 'flex';
+  var loadingEl = document.getElementById('items-loading');
+  loadingEl.style.display = 'flex';
+  loadingEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Loading inventory from Manager.io…';
 
-  const headers = {
-    'Authorization': 'Bearer ' + token,
-    'Content-Type': 'application/json',
-  };
+  const headers = { 'Authorization': 'Bearer ' + token };
 
-  // All known Manager.io batch endpoint variants (api2 format)
-  const endpoints = [
+  // ── Step 1: Discover the correct base URL ──────────────────────────────
+  // Manager.io api2 desktop format: http://localhost:PORT/api2/BUSINESS_KEY
+  // The user may have entered just http://localhost:PORT/api2 (no business key)
+  // or the full http://localhost:PORT/api2/BUSINESSKEY
+  // We try to auto-discover by fetching the /api2 root which lists businesses.
+
+  var resolvedBase = base; // may be updated after discovery
+  var discoveryError = null;
+
+  // If base ends in /api2 (no business key), try to discover businesses
+  if (/\/api2\s*$/i.test(base)) {
+    try {
+      var discRes = await fetch(base, { headers: headers });
+      if (discRes.ok) {
+        var discData = await discRes.json();
+        // Response is usually an array of business objects or a single object
+        var businesses = Array.isArray(discData) ? discData : (discData.businesses || discData.data || [discData]);
+        if (businesses.length > 0) {
+          var biz = businesses[0];
+          var bizKey = biz.key || biz.Key || biz.id || biz.Id || biz.handle || '';
+          if (bizKey) {
+            resolvedBase = base + '/' + bizKey;
+            // Update ctx so it's correct for future calls
+            ctx.apiEndpoint = resolvedBase;
+            // Save updated endpoint
+            try {
+              var saved = JSON.parse(localStorage.getItem('mgr_manual_conn_v1') || '{}');
+              saved.endpoint = resolvedBase;
+              localStorage.setItem('mgr_manual_conn_v1', JSON.stringify(saved));
+            } catch(e) {}
+            ctx.businessName = biz.name || biz.Name || biz.businessName || 'Your Business';
+            document.getElementById('ctx-business-label').textContent = ctx.businessName;
+            showToast('Business found: ' + ctx.businessName);
+          }
+        }
+      }
+    } catch(e) {
+      discoveryError = e.message;
+    }
+  }
+
+  // ── Step 2: Try all known inventory batch endpoint formats ─────────────
+  var triedUrls = [];
+  var lastError = discoveryError || '';
+  var found = false;
+
+  var candidates = [
+    resolvedBase + '/inventory-item-batch',
+    resolvedBase + '/InventoryItem-batch',
+    resolvedBase + '/inventory-items',
     base + '/inventory-item-batch',
-    base + '/inventory-items-batch',
-    base + '/inventoryitem-batch',
     base + '/InventoryItem-batch',
   ];
-
-  let fetchError = null;
+  // Deduplicate
+  var seen = {};
+  var endpoints = candidates.filter(function(u) {
+    if (seen[u]) return false;
+    seen[u] = true; return true;
+  });
 
   for (var i = 0; i < endpoints.length; i++) {
+    var url = endpoints[i];
+    triedUrls.push(url);
     try {
-      const res = await fetch(endpoints[i], { method: 'GET', headers: headers });
-      if (!res.ok) { fetchError = 'HTTP ' + res.status; continue; }
-      const data = await res.json();
+      var res = await fetch(url, { headers: headers });
+      if (!res.ok) { lastError = 'HTTP ' + res.status + ' at ' + url; continue; }
+      var data = await res.json();
 
       var items = [];
-      if (Array.isArray(data))                       items = data;
-      else if (data && Array.isArray(data.data))     items = data.data;
-      else if (data && Array.isArray(data.items))    items = data.items;
+      if (Array.isArray(data))                    items = data;
+      else if (data && Array.isArray(data.data))  items = data.data;
+      else if (data && Array.isArray(data.items)) items = data.items;
 
       if (items.length > 0) {
         inventoryItems = items.map(function(it) {
@@ -752,39 +803,50 @@ async function fetchInventoryItems() {
             key:       it.key  || it.Key  || it.id  || it.Id  || String(Math.random()),
             name:      it.name || it.Name || it.itemName || it.ItemName || it.description || '',
             code:      it.code || it.Code || it.itemCode || '',
-            buyPrice:  parseFloat(it.purchasePrice || it.PurchasePrice || it.buyPrice  || it.costPrice  || 0) || 0,
-            sellPrice: parseFloat(it.salesPrice    || it.SalesPrice    || it.salePrice || it.sellPrice  || it.unitPrice || 0) || 0,
+            buyPrice:  parseFloat(it.purchasePrice || it.PurchasePrice || it.buyPrice  || 0) || 0,
+            sellPrice: parseFloat(it.salesPrice    || it.SalesPrice    || it.salePrice || it.sellPrice || 0) || 0,
           };
         }).filter(function(it) { return it.name; });
-        fetchError = null;
+        found = true;
         break;
+      } else {
+        lastError = 'Empty response from ' + url;
       }
     } catch(e) {
-      fetchError = e.message || String(e);
-      // CORS or network error — only relevant when running outside Manager.io iframe
+      lastError = e.message + ' (at ' + url.replace(base,'') + ')';
     }
   }
 
-  document.getElementById('items-loading').style.display = 'none';
+  // ── Step 3: Show result or detailed error ──────────────────────────────
+  loadingEl.style.display = 'block';
 
-  if (fetchError && inventoryItems.length === 0) {
-    // Show a clear error in the items tab
-    var isCors = fetchError.toLowerCase().includes('fetch') || fetchError.toLowerCase().includes('network') || fetchError.toLowerCase().includes('cors');
-    var errMsg = isCors
-      ? '⚠ CORS Error: API calls are blocked by the browser when running outside Manager.io. ' +
-        'Your credentials are saved. Open Manager.io → scroll to the Dual Units panel → it will connect automatically.'
-      : '⚠ API Error: ' + fetchError + '. Check your endpoint URL and token in settings.';
-    document.getElementById('items-loading').innerHTML =
-      '<div style="font-size:12.5px;color:var(--amber);background:var(--amber-lt);border:1px solid #FDE68A;border-radius:8px;padding:10px 12px;line-height:1.6">' +
-      errMsg + '</div>';
-    document.getElementById('items-loading').style.display = 'block';
+  if (found) {
+    loadingEl.style.display = 'none';
+    renderItemsTab();
     populateCalcDropdown();
+    showToast('✓ ' + inventoryItems.length + ' inventory items loaded');
     return;
   }
 
-  renderItemsTab();
+  // Show actionable error with the URLs we tried
+  var isCors = lastError.toLowerCase().includes('fetch') || lastError.includes('Failed') || lastError.includes('NetworkError');
+  var errHtml = '';
+  if (isCors) {
+    errHtml = '<strong>⚠ CORS / Network Error</strong><br>' +
+      'API calls are blocked outside Manager.io's iframe. Your credentials are saved. ' +
+      'Open the extension panel <em>inside Manager.io</em> and it will connect automatically.<br><br>' +
+      '<strong>Error:</strong> ' + lastError;
+  } else {
+    errHtml = '<strong>⚠ Could not load inventory</strong><br>' +
+      '<strong>Last error:</strong> ' + lastError + '<br><br>' +
+      '<strong>Tried:</strong><br>' + triedUrls.map(function(u){ return '• ' + u; }).join('<br>') + '<br><br>' +
+      '<strong>Fix:</strong> Check your Endpoint URL includes the business key.<br>' +
+      'Desktop format: <code>http://localhost:PORT/api2/BUSINESS_KEY</code><br>' +
+      'In Manager.io: Settings → API Access → the sample URL shows your BUSINESS_KEY';
+  }
+
+  loadingEl.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px;line-height:1.7;width:100%">' + errHtml + '</div>';
   populateCalcDropdown();
-  if (inventoryItems.length > 0) showToast('✓ ' + inventoryItems.length + ' inventory items loaded');
 }
 
 // ── Focus tracking via postMessage to parent ──────────────────
@@ -1306,14 +1368,20 @@ document.getElementById('demo-connect-btn').addEventListener('click', function()
     setTimeout(function() {
       if (ctxReceived) return; // postMessage already worked, great
       ctxReceived = true;
+      // Try to get the parent (Manager.io) page URL
+      var parentUrl = '(inside Manager.io)';
+      try { parentUrl = window.parent.location.href; } catch(e) {
+        // Cross-origin: can't read parent URL directly — that's fine
+        parentUrl = 'Manager.io (cross-origin)';
+      }
       ctx = {
         apiEndpoint:    saved.endpoint,
         apiAccessToken: saved.token,
-        currentPageUrl: window.location.href,
+        currentPageUrl: parentUrl,
         businessName:   'Your Business'
       };
       try { onContextReceived(); } catch(e) { showConnectError(e); }
-    }, 1500); // short delay to give postMessage a chance first
+    }, 1500);
     return;
   }
 
