@@ -363,10 +363,17 @@
     <!-- MANUAL tab -->
     <div class="conn-panel" id="conn-manual">
       <div class="mc-hint">
-        Enter your Manager.io API details to connect directly — no postMessage needed.<br><br>
-        <strong>Desktop:</strong> Endpoint = <code>http://localhost:PORT/api4</code><br>
-        <strong>Cloud:</strong> Endpoint = <code>https://api.manager.io/api4/KEY</code><br><br>
-        Get your token: Settings → API Access → Create Token
+        <strong>⚠ Important:</strong> Due to browser security (CORS), API calls only work from <em>inside</em> the Manager.io iframe — not from this page directly.<br><br>
+        <strong>How this works:</strong><br>
+        1. Enter your endpoint &amp; token below<br>
+        2. Click Connect — credentials are saved locally<br>
+        3. Open Manager.io → your extension panel will auto-load inventory using these saved credentials<br><br>
+        <strong>Where to find these:</strong><br>
+        • <strong>Desktop endpoint:</strong> <code>http://localhost:PORT/api4</code><br>
+        &nbsp;&nbsp;(find PORT in Manager.io → About)<br>
+        • <strong>Cloud endpoint:</strong> <code>https://api.manager.io/api4/BUSINESS_KEY</code><br>
+        &nbsp;&nbsp;(find BUSINESS_KEY in Settings → API Access)<br>
+        • <strong>Token:</strong> Settings → API Access → Create Token
       </div>
       <div class="mc-group">
         <label class="mc-label">API Endpoint URL</label>
@@ -667,16 +674,31 @@ function onContextReceived() {
   // Hide connecting splash, show app
   document.getElementById('connecting-view').style.display = 'none';
   document.getElementById('app-view').style.display = 'block';
-  document.getElementById('status-dot').className = 'status-dot connected';
-  document.getElementById('status-text').textContent = 'Connected';
 
-  // Context banner — try all known field names Manager.io has used across versions
-  const placement = ctx.currentPageUrl || ctx.placement || ctx.pageUrl || ctx.page || ctx.path || '—';
-  const business  = ctx.businessName || ctx.business || ctx.name || '';
+  // Determine connection mode for status display
+  var isManual = (ctx.currentPageUrl === '/manual');
+  var isDemo   = (ctx.currentPageUrl === '/demo');
+  var statusDot  = document.getElementById('status-dot');
+  var statusText = document.getElementById('status-text');
+
+  if (isDemo) {
+    statusDot.className = 'status-dot'; statusDot.style.background = '#FCD34D';
+    statusText.textContent = 'Demo Mode';
+  } else if (isManual) {
+    statusDot.className = 'status-dot'; statusDot.style.background = '#F97316';
+    statusText.textContent = 'Manual — API calls inside iframe only';
+  } else {
+    statusDot.className = 'status-dot connected';
+    statusText.textContent = 'Connected via Manager.io';
+  }
+
+  // Context banner
+  var placement = ctx.currentPageUrl || ctx.placement || ctx.pageUrl || ctx.page || ctx.path || '—';
+  var business  = ctx.businessName || ctx.business || ctx.name || '';
   document.getElementById('ctx-page-label').textContent = placement;
   if (business) document.getElementById('ctx-business-label').textContent = business;
 
-  // Load inventory from API
+  // Load inventory
   fetchInventoryItems();
 }
 
@@ -684,11 +706,10 @@ function onContextReceived() {
 async function fetchInventoryItems() {
   if (!ctx) return;
 
-  // ctx.apiEndpoint is the full base, e.g. "http://localhost:8080/api4"
-  // or "https://cloud.manager.io/api4/BUSINESS_KEY"
-  // The correct endpoint for inventory is: apiEndpoint + "/inventory-item-batch"
-  const base = ctx.apiEndpoint || '';
-  if (!base || !ctx.apiAccessToken) {
+  const base  = ctx.apiEndpoint || '';
+  const token = ctx.apiAccessToken || '';
+
+  if (!base || !token) {
     document.getElementById('items-loading').style.display = 'none';
     renderItemsTab();
     populateCalcDropdown();
@@ -697,50 +718,70 @@ async function fetchInventoryItems() {
 
   document.getElementById('items-loading').style.display = 'flex';
 
-  // Manager.io batch endpoints (preferred — returns all records at once)
-  const endpoints = [
-    `${base}/inventory-item-batch`,
-    `${base}/inventory-items-batch`,
-    `${base}/inventoryitem-batch`,
-  ];
-
   const headers = {
-    'Authorization': `Bearer ${ctx.apiAccessToken}`,
+    'Authorization': 'Bearer ' + token,
     'Content-Type': 'application/json',
   };
 
-  for (const url of endpoints) {
+  // All known Manager.io batch endpoint variants
+  const endpoints = [
+    base + '/inventory-item-batch',
+    base + '/inventory-items-batch',
+    base + '/inventoryitem-batch',
+  ];
+
+  let fetchError = null;
+
+  for (var i = 0; i < endpoints.length; i++) {
     try {
-      const res = await fetch(url, { method: 'GET', headers });
-      if (!res.ok) continue;
+      const res = await fetch(endpoints[i], { method: 'GET', headers: headers });
+      if (!res.ok) { fetchError = 'HTTP ' + res.status; continue; }
       const data = await res.json();
 
-      // Manager.io batch returns: { "data": [...] } or just [...]
-      let items = [];
-      if (Array.isArray(data)) items = data;
-      else if (data && Array.isArray(data.data)) items = data.data;
-      else if (data && Array.isArray(data.items)) items = data.items;
+      var items = [];
+      if (Array.isArray(data))                       items = data;
+      else if (data && Array.isArray(data.data))     items = data.data;
+      else if (data && Array.isArray(data.items))    items = data.items;
 
       if (items.length > 0) {
-        inventoryItems = items.map(it => {
-          // Manager.io field names vary — handle both camelCase and PascalCase
+        inventoryItems = items.map(function(it) {
           return {
-            key:       it.key || it.Key || it.id || it.Id || String(Math.random()),
-            name:      it.name || it.Name || it.itemName || it.ItemName || it.description || 'Unnamed',
+            key:       it.key  || it.Key  || it.id  || it.Id  || String(Math.random()),
+            name:      it.name || it.Name || it.itemName || it.ItemName || it.description || '',
             code:      it.code || it.Code || it.itemCode || '',
-            buyPrice:  parseFloat(it.purchasePrice || it.PurchasePrice || it.buyPrice || it.costPrice || 0) || 0,
-            sellPrice: parseFloat(it.salesPrice || it.SalesPrice || it.salePrice || it.sellPrice || it.unitPrice || 0) || 0,
+            buyPrice:  parseFloat(it.purchasePrice || it.PurchasePrice || it.buyPrice  || it.costPrice  || 0) || 0,
+            sellPrice: parseFloat(it.salesPrice    || it.SalesPrice    || it.salePrice || it.sellPrice  || it.unitPrice || 0) || 0,
           };
-        }).filter(it => it.name && it.name !== 'Unnamed');
+        }).filter(function(it) { return it.name; });
+        fetchError = null;
         break;
       }
-    } catch(e) { /* try next */ }
+    } catch(e) {
+      fetchError = e.message || String(e);
+      // CORS or network error — only relevant when running outside Manager.io iframe
+    }
   }
 
   document.getElementById('items-loading').style.display = 'none';
+
+  if (fetchError && inventoryItems.length === 0) {
+    // Show a clear error in the items tab
+    var isCors = fetchError.toLowerCase().includes('fetch') || fetchError.toLowerCase().includes('network') || fetchError.toLowerCase().includes('cors');
+    var errMsg = isCors
+      ? '⚠ CORS Error: API calls are blocked by the browser when running outside Manager.io. ' +
+        'Your credentials are saved. Open Manager.io → scroll to the Dual Units panel → it will connect automatically.'
+      : '⚠ API Error: ' + fetchError + '. Check your endpoint URL and token in settings.';
+    document.getElementById('items-loading').innerHTML =
+      '<div style="font-size:12.5px;color:var(--amber);background:var(--amber-lt);border:1px solid #FDE68A;border-radius:8px;padding:10px 12px;line-height:1.6">' +
+      errMsg + '</div>';
+    document.getElementById('items-loading').style.display = 'block';
+    populateCalcDropdown();
+    return;
+  }
+
   renderItemsTab();
   populateCalcDropdown();
-  if (inventoryItems.length > 0) showToast(`✓ ${inventoryItems.length} inventory items loaded`);
+  if (inventoryItems.length > 0) showToast('✓ ' + inventoryItems.length + ' inventory items loaded');
 }
 
 // ── Focus tracking via postMessage to parent ──────────────────
@@ -1235,31 +1276,13 @@ document.getElementById('mc-connect-btn').addEventListener('click', function() {
   if (!endpoint) { errEl.textContent = 'Please enter the API Endpoint URL.'; errEl.style.display = 'block'; return; }
   if (!token)    { errEl.textContent = 'Please enter the API Access Token.'; errEl.style.display = 'block'; return; }
 
-  var btn = document.getElementById('mc-connect-btn');
-  btn.textContent = 'Connecting…'; btn.disabled = true;
-
-  // Test connection with a lightweight call
-  fetch(endpoint + '/business', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(function(res) {
-      if (!res.ok) throw new Error('HTTP ' + res.status + ' — check your endpoint and token');
-      return res.json();
-    })
-    .then(function(data) {
-      if (document.getElementById('mc-remember').checked) saveCreds(endpoint, token);
-      ctxReceived = true;
-      ctx = {
-        apiEndpoint: endpoint,
-        apiAccessToken: token,
-        currentPageUrl: '/manual',
-        businessName: data.name || data.businessName || data.Name || 'Your Business'
-      };
-      try { onContextReceived(); } catch(e) { showConnectError(e); }
-    })
-    .catch(function(err) {
-      btn.textContent = 'Connect to Manager.io'; btn.disabled = false;
-      errEl.textContent = 'Connection failed: ' + err.message + '. Check the endpoint URL and token.';
-      errEl.style.display = 'block';
-    });
+  // Note: We cannot test the connection here because browsers block
+  // cross-origin API calls (CORS). We save credentials and attempt
+  // the real connection when loading inventory inside Manager.io's iframe.
+  if (document.getElementById('mc-remember').checked) saveCreds(endpoint, token);
+  ctxReceived = true;
+  ctx = { apiEndpoint: endpoint, apiAccessToken: token, currentPageUrl: '/manual', businessName: 'Your Business' };
+  try { onContextReceived(); } catch(e) { showConnectError(e); }
 });
 
 // ── Demo connect ──────────────────────────────────────────────
@@ -1272,18 +1295,35 @@ document.getElementById('demo-connect-btn').addEventListener('click', function()
 // ── Auto-load saved credentials on startup ────────────────────
 (function() {
   var saved = loadSavedCreds();
+
+  // Strategy 1: if inside an iframe AND have saved creds, connect immediately
+  // (inside Manager.io iframe, CORS is not a problem)
+  if (saved && window.self !== window.top) {
+    // We're in an iframe — use saved credentials directly without waiting for postMessage
+    setTimeout(function() {
+      if (ctxReceived) return; // postMessage already worked, great
+      ctxReceived = true;
+      ctx = {
+        apiEndpoint:    saved.endpoint,
+        apiAccessToken: saved.token,
+        currentPageUrl: window.location.href,
+        businessName:   'Your Business'
+      };
+      try { onContextReceived(); } catch(e) { showConnectError(e); }
+    }, 1500); // short delay to give postMessage a chance first
+    return;
+  }
+
+  // Strategy 2: not in iframe — switch to manual tab after 4s
   if (saved) {
-    // Show manual tab as active hint — user has saved creds
-    // But still try auto first; if no postMessage in 4s, prompt manual
     setTimeout(function() {
       if (ctxReceived) return;
-      // Switch to manual tab automatically and show hint
       document.querySelectorAll('.conn-tab').forEach(function(b) { b.classList.remove('active'); });
       document.querySelectorAll('.conn-panel').forEach(function(p) { p.classList.remove('active'); });
       document.querySelector('[data-conn-tab="manual"]').classList.add('active');
       document.getElementById('conn-manual').classList.add('active');
       showToast('Saved credentials ready — click Connect');
-    }, 4000);
+    }, 3000);
   }
 })();
 
