@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manager.io Diagnostic</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; font-size: 12px; background: #0f172a; color: #e2e8f0; padding: 12px; }
+  h2 { font-size: 13px; color: #38bdf8; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 1px; }
+  .row { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid #1e293b; }
+  .label { color: #94a3b8; min-width: 180px; flex-shrink: 0; }
+  .val { color: #4ade80; word-break: break-all; }
+  .val.red { color: #f87171; }
+  .val.yellow { color: #fbbf24; }
+  #msgs { margin-top: 4px; }
+  .msg { background: #1e293b; border-left: 3px solid #38bdf8; padding: 6px 8px; margin-bottom: 6px; word-break: break-all; line-height: 1.6; }
+  .msg.highlight { border-color: #4ade80; }
+  .ts { color: #64748b; }
+  .origin { color: #f97316; }
+  #count { color: #fbbf24; font-size: 11px; }
+  .section { background: #1e293b; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<div class="section">
+  <h2>🔍 Window Context</h2>
+  <div class="row"><span class="label">window.self === window.top</span><span class="val" id="is-top"></span></div>
+  <div class="row"><span class="label">window.self === window.parent</span><span class="val" id="is-parent"></span></div>
+  <div class="row"><span class="label">window.opener exists</span><span class="val" id="has-opener"></span></div>
+  <div class="row"><span class="label">window.location.href</span><span class="val" id="self-href"></span></div>
+  <div class="row"><span class="label">document.referrer</span><span class="val" id="referrer"></span></div>
+  <div class="row"><span class="label">window.name</span><span class="val" id="win-name"></span></div>
+  <div class="row"><span class="label">URL search params</span><span class="val" id="url-params"></span></div>
+  <div class="row"><span class="label">URL hash</span><span class="val" id="url-hash"></span></div>
+</div>
+
+<div class="section">
+  <h2>📨 All postMessages received &nbsp;<span id="count">0 received</span></h2>
+  <div id="msgs"><span style="color:#475569">Waiting for messages…</span></div>
+</div>
+
+<div class="section">
+  <h2>📋 Raw window.name content</h2>
+  <div id="win-name-raw" style="color:#fbbf24;word-break:break-all;line-height:1.6">(empty)</div>
+</div>
+
+<script>
+var msgCount = 0;
+
+// Fill window context info
+document.getElementById('is-top').textContent     = String(window.self === window.top);
+document.getElementById('is-parent').textContent  = String(window.self === window.parent);
+document.getElementById('has-opener').textContent = String(!!window.opener);
+document.getElementById('self-href').textContent  = window.location.href;
+document.getElementById('referrer').textContent   = document.referrer || '(empty)';
+document.getElementById('win-name').textContent   = window.name ? window.name.slice(0,100) : '(empty)';
+document.getElementById('url-params').textContent = window.location.search || '(none)';
+document.getElementById('url-hash').textContent   = window.location.hash   || '(none)';
+document.getElementById('win-name-raw').textContent = window.name || '(empty)';
+
+// Color helpers
+['is-top','is-parent','has-opener'].forEach(function(id) {
+  var el = document.getElementById(id);
+  if (el.textContent === 'true')  el.className = 'val';
+  if (el.textContent === 'false') el.className = 'val red';
+});
+if (!document.referrer) document.getElementById('referrer').className = 'val red';
+
+// Catch ALL postMessages
+window.addEventListener('message', function(ev) {
+  msgCount++;
+  document.getElementById('count').textContent = msgCount + ' received';
+
+  var raw = '';
+  try { raw = JSON.stringify(ev.data, null, 2); } catch(e) { raw = String(ev.data); }
+
+  var isContext = raw.includes('manager-context') || raw.includes('apiEndpoint') || raw.includes('apiAccessToken');
+
+  var div = document.createElement('div');
+  div.className = 'msg' + (isContext ? ' highlight' : '');
+  div.innerHTML =
+    '<span class="ts">[' + new Date().toISOString().slice(11,23) + ']</span> ' +
+    '<span class="origin">' + (ev.origin||'?') + '</span><br>' +
+    '<span style="color:#e2e8f0">' + raw.slice(0,800) + '</span>';
+
+  var container = document.getElementById('msgs');
+  container.innerHTML = '';
+  container.appendChild(div);
+}, false);
+
+// Also signal readiness to both parent and opener
+try { window.parent.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+try { if (window.opener) window.opener.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+setTimeout(function() {
+  try { window.parent.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+  try { if (window.opener) window.opener.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
+}, 1000);
+</script>
+</body>
+</html>
