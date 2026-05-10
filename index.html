@@ -801,23 +801,19 @@ document.addEventListener('DOMContentLoaded', function() {
   setupItemsUI();
   setupInvoiceUI();
 
-  // Auto-launch after 3s if no context received
+  // Auto-launch after 3s ONLY if saved credentials exist
+  // Never auto-launch into demo — user must choose explicitly
   setTimeout(function() {
     if (ctxReceived) return;
     var saved = loadCreds();
-    if (saved) {
-      // Use saved credentials
+    if (saved && saved.endpoint && saved.token) {
       appMode = 'manual';
       ctx = { apiEndpoint: saved.endpoint, apiAccessToken: saved.token,
                currentPageUrl: 'Manual', businessName: 'Your Business' };
-    } else {
-      // Fall back to demo
-      appMode = 'demo';
-      ctx = { apiEndpoint: null, apiAccessToken: null,
-               currentPageUrl: 'Demo', businessName: 'Demo' };
+      ctxReceived = true;
+      launchApp();
     }
-    ctxReceived = true;
-    launchApp();
+    // No saved creds → stay on connecting screen, user must click Connect or Demo
   }, 3000);
 
   // Pre-fill saved credentials in manual connect form
