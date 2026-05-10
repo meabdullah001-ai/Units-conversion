@@ -366,18 +366,18 @@
     <!-- MANUAL tab -->
     <div class="conn-panel" id="conn-manual">
       <div class="mc-hint">
-        <strong>Step 1 — Clear old credentials first:</strong><br>
-        Click the red "Clear saved credentials" button below before entering new ones.<br><br>
-        <strong>Step 2 — Your endpoint URL (Cloud):</strong><br>
-        <code>https://mnzrventures.manager.io/api2</code><br>
-        (Replace <em>mnzrventures</em> with your actual subdomain if different)<br><br>
-        <strong>Step 3 — Fresh Access Token:</strong><br>
-        Settings → API Access → <strong>New Access Token</strong> → copy &amp; paste below<br><br>
-        <strong>Step 4 — Click Connect.</strong>
+        <strong>Step 1 — Get your endpoint &amp; token from Manager.io:</strong><br>
+        Go to <strong>Settings → API Access → New Access Token</strong><br><br>
+        Manager.io will show you two things — copy both:<br>
+        • <strong>Endpoint:</strong> looks like<br>
+        &nbsp;&nbsp;<code>https://XXXX.ip.manager.cloud/api2</code><br>
+        • <strong>Secret</strong> (your access token)<br><br>
+        ⚠ Copy the Secret immediately — Manager.io only shows it once!<br><br>
+        <strong>Step 2 — Clear old credentials</strong> (red button below), then enter the fresh Endpoint + Secret and click Connect.
       </div>
       <div class="mc-group">
         <label class="mc-label">API Endpoint URL</label>
-        <input class="mc-input" id="mc-endpoint" type="url" placeholder="http://localhost:8080/api2" spellcheck="false">
+        <input class="mc-input" id="mc-endpoint" type="url" placeholder="https://XXXX.ip.manager.cloud/api2" spellcheck="false">
       </div>
       <div class="mc-group">
         <label class="mc-label">API Access Token</label>
@@ -932,26 +932,14 @@ function loadInventory() {
   // Build a list of base URLs to try — including the auto-detected Manager.io domain
   var basesToTry = [savedBase];
 
-  // If we detected the Manager.io domain from document.referrer, add api2 variants
-  if (window._detectedManagerBase) {
-    var mb = window._detectedManagerBase;
-    if (basesToTry.indexOf(mb + '/api2') === -1)    basesToTry.push(mb + '/api2');
-    if (basesToTry.indexOf(mb + '/api2/') === -1)   basesToTry.push(mb + '/api2/');
-  }
+  // No extra guessing — use exactly what the user entered from Settings → API Access
 
-  // Also try without business key if saved base already has /api2/SOMETHING
-  var api2Match = savedBase.match(/^(https?:\/\/.+\/api2)/i);
-  if (api2Match && basesToTry.indexOf(api2Match[1]) === -1) basesToTry.push(api2Match[1]);
-
-  // For each base, expand into full endpoint URLs
-  var allUrls = [];
-  basesToTry.forEach(function(base) {
-    allUrls.push(base + '/inventory-item-batch');
-    allUrls.push(base + '/InventoryItem-batch');
-  });
-
-  // Remove duplicates
-  var seen = {}; allUrls = allUrls.filter(function(u){ if(seen[u])return false; seen[u]=true; return true; });
+  // Build endpoint URLs from the saved base
+  var allUrls = [
+    savedBase + '/inventory-item-batch',
+    savedBase + '/InventoryItem-batch',
+    savedBase + '/inventory-items',
+  ];
 
   tryFetchEndpoints(allUrls, headers).then(function(items) {
     if (loadEl) loadEl.style.display = 'none';
