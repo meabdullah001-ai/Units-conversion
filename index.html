@@ -366,16 +366,14 @@
     <!-- MANUAL tab -->
     <div class="conn-panel" id="conn-manual">
       <div class="mc-hint">
-        <strong>Step 1 — Find your endpoint URL:</strong><br>
-        • <strong>Desktop app:</strong> <code>http://localhost:PORT/api2</code><br>
-        &nbsp;&nbsp;→ Find PORT: in Manager.io click the <strong>⋮ menu → About</strong><br>
-        &nbsp;&nbsp;→ Example: <code>http://localhost:11542/api2</code><br><br>
-        • <strong>Cloud edition:</strong> <code>https://api.manager.io/api2/BUSINESS_KEY</code><br>
-        &nbsp;&nbsp;→ Find BUSINESS_KEY: Settings → API Access → it shows in the sample URL<br><br>
-        <strong>Step 2 — Get your Access Token:</strong><br>
-        Settings → API Access → <strong>New Access Token</strong> → copy it<br><br>
-        <strong>Step 3 — Enter both below and click Connect.</strong><br>
-        Credentials are saved locally. Inside Manager.io the extension will use them automatically.
+        <strong>Step 1 — Clear old credentials first:</strong><br>
+        Click the red "Clear saved credentials" button below before entering new ones.<br><br>
+        <strong>Step 2 — Your endpoint URL (Cloud):</strong><br>
+        <code>https://mnzrventures.manager.io/api2</code><br>
+        (Replace <em>mnzrventures</em> with your actual subdomain if different)<br><br>
+        <strong>Step 3 — Fresh Access Token:</strong><br>
+        Settings → API Access → <strong>New Access Token</strong> → copy &amp; paste below<br><br>
+        <strong>Step 4 — Click Connect.</strong>
       </div>
       <div class="mc-group">
         <label class="mc-label">API Endpoint URL</label>
@@ -389,6 +387,9 @@
         <input type="checkbox" id="mc-remember" checked style="width:14px;height:14px">
         Remember credentials in this browser
       </label>
+      <button id="mc-clear-btn" style="background:#fee2e2;color:#dc2626;border:1px solid #fecaca;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left">
+        🗑 Clear saved credentials &amp; reset
+      </button>
       <div class="mc-error" id="mc-error"></div>
       <button class="mc-connect-btn" id="mc-connect-btn">Connect to Manager.io</button>
     </div>
@@ -863,6 +864,22 @@ function setupConnectUI() {
     ctx = { apiEndpoint: ep, apiAccessToken: tok, currentPageUrl: 'Manual', businessName: 'Your Business' };
     ctxReceived = true;
     launchApp();
+  });
+
+  // Clear saved credentials button
+  var clearBtn = document.getElementById('mc-clear-btn');
+  if (clearBtn) clearBtn.addEventListener('click', function() {
+    localStorage.removeItem('mgr_manual_conn_v1');
+    localStorage.removeItem('mgr_dual_config_v1');
+    localStorage.removeItem('dualUnitsItems');
+    var epEl = document.getElementById('mc-endpoint');
+    var tkEl = document.getElementById('mc-token');
+    var pill = document.getElementById('mc-saved-pill');
+    if (epEl) epEl.value = '';
+    if (tkEl) tkEl.value = '';
+    if (pill) pill.style.display = 'none';
+    var err = document.getElementById('mc-error');
+    if (err) { err.style.color='#16a34a'; err.textContent='✓ All saved credentials cleared. Enter fresh details below.'; err.style.display='block'; err.style.background='#f0fdf4'; err.style.borderColor='#bbf7d0'; }
   });
 
   // Demo button
