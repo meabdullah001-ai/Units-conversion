@@ -4,118 +4,86 @@
 body{font-family:monospace;font-size:12px;background:#0f172a;color:#e2e8f0;padding:14px;margin:0}
 h2{color:#38bdf8;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:14px 0 5px}
 .row{padding:3px 0;border-bottom:1px solid #1e293b;display:flex;gap:8px;flex-wrap:wrap}
-.lbl{color:#64748b;min-width:220px}.val{color:#4ade80;word-break:break-all}
-.no{color:#f87171}
+.lbl{color:#64748b;min-width:180px}.val{color:#4ade80;word-break:break-all}.no{color:#f87171}
 .box{background:#1e293b;border-radius:5px;padding:8px;margin-top:4px;word-break:break-all;line-height:1.6;font-size:11px;color:#94a3b8;min-height:28px}
-.ok{color:#4ade80!important;border-left:3px solid #4ade80}
-.err{color:#f87171!important;border-left:3px solid #f87171}
-button{margin:4px 4px 4px 0;padding:6px 12px;background:#1d4ed8;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:11px}
+.ok{border-left:3px solid #4ade80;color:#4ade80!important}
+button{margin:3px;padding:6px 10px;background:#1d4ed8;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:11px}
 pre{white-space:pre-wrap;margin:0}
 </style></head>
 <body>
+<h2>Context</h2>
+<div class="row"><span class="lbl">In iframe</span><span class="val" id="v1"></span></div>
+<div class="row"><span class="lbl">document.referrer</span><span class="val" id="v2"></span></div>
 
-<h2>1. Window Context</h2>
-<div class="row"><span class="lbl">window.self === window.top</span><span class="val" id="vt"></span></div>
-<div class="row"><span class="lbl">window.parent === window.top</span><span class="val" id="vpt"></span></div>
-<div class="row"><span class="lbl">document.referrer</span><span class="val" id="vr"></span></div>
+<h2>Received Messages — <span id="cnt" style="color:#fbbf24">0</span></h2>
+<div class="box" id="msgs">Waiting…</div>
 
-<h2>2. Manager.io Injected Globals (set by api-proxy.js)</h2>
-<div class="row"><span class="lbl">window.managerAppContext</span><span class="val" id="g-ctx"></span></div>
-<div class="row"><span class="lbl">  .apiEndpoint</span><span class="val" id="g-ep"></span></div>
-<div class="row"><span class="lbl">  .apiAccessToken</span><span class="val" id="g-tok"></span></div>
-<div class="row"><span class="lbl">window.manager</span><span class="val" id="g-mgr"></span></div>
-<div class="row"><span class="lbl">window.managerAPI</span><span class="val" id="g-api"></span></div>
-<div class="row"><span class="lbl">window.managerContext</span><span class="val" id="g-mctx"></span></div>
+<h2>Send postMessage to parent (try each)</h2>
+<button onclick="send({type:'requestContext'})">requestContext</button>
+<button onclick="send({type:'manager-extension-ready'})">extension-ready</button>
+<button onclick="send({type:'ready'})">ready</button>
+<button onclick="send({type:'init'})">init</button>
+<button onclick="send({type:'connect'})">connect</button>
+<button onclick="send({type:'fetch',path:'sales-invoice-batch',method:'GET'})">fetch sales</button>
+<button onclick="send({action:'getData',resource:'sales-invoice-batch'})">getData</button>
+<button onclick="send({type:'api',endpoint:'sales-invoice-batch'})">api endpoint</button>
+<button onclick="send('ready')">string ready</button>
+<button onclick="send({type:'request',url:'sales-invoice-batch?PageSize=1'})">request url</button>
+<div class="box" id="sent">Nothing sent yet</div>
 
-<h2>3. New globals added since load</h2>
-<div class="box" id="win-keys">Scanning every 200ms…</div>
-
-<h2>4. postMessages received</h2>
-<span id="cnt" style="color:#fbbf24;font-size:11px">0 received</span>
-<div class="box" id="mb">Waiting…</div>
-
-<h2>5. Fetch Tests</h2>
-<button onclick="tryNoAuth()">No auth header</button>
-<button onclick="tryCookies()">Session cookies</button>
-<button onclick="tryToken()">Context token (if found)</button>
-<div class="box" id="fr">Click a button above</div>
+<h2>All globals added by Manager.io</h2>
+<div class="box" id="globals">Scanning…</div>
 
 <script>
-document.getElementById('vt').textContent  = String(window.self === window.top);
-document.getElementById('vpt').textContent = String(window.parent === window.top);
-document.getElementById('vr').textContent  = document.referrer || '(empty)';
-['vt','vpt'].forEach(function(id){
-  if(document.getElementById(id).textContent==='false') document.getElementById(id).className='val no';
-});
+document.getElementById('v1').textContent = String(window.self !== window.top);
+document.getElementById('v2').textContent = document.referrer || '(empty)';
 
-var BASE_KEYS = Object.keys(window).concat(Object.getOwnPropertyNames(window));
+var BASE = Object.keys(window);
+var n = 0;
 
-function ck(id, val) {
-  var el = document.getElementById(id);
-  if (val == null) { el.textContent='(not set)'; el.className='val no'; }
-  else { el.textContent=JSON.stringify(val).slice(0,140); el.className='val'; }
-}
-
-function scan() {
-  ck('g-ctx',  window.managerAppContext);
-  ck('g-mgr',  window.manager);
-  ck('g-api',  window.managerAPI);
-  ck('g-mctx', window.managerContext);
-  var ctx = window.managerAppContext;
-  if (ctx) {
-    ck('g-ep',  ctx.apiEndpoint || ctx.endpoint);
-    var t = ctx.apiAccessToken || ctx.token || ctx.accessToken;
-    ck('g-tok', t ? t.slice(0,30)+'...' : null);
-  } else {
-    document.getElementById('g-ep').textContent  = '(awaiting managerAppContext)';
-    document.getElementById('g-tok').textContent = '(awaiting managerAppContext)';
-  }
-  var all = Object.keys(window);
-  var added = all.filter(function(k){ return BASE_KEYS.indexOf(k)===-1; });
-  var el = document.getElementById('win-keys');
-  if (!added.length) { el.textContent='(none yet)'; el.className='box'; }
-  else { el.innerHTML='<b style="color:#4ade80">NEW:</b> '+added.join(', '); el.className='box ok'; }
-}
-
-var i=0; var t=setInterval(function(){ scan(); if(++i>75) clearInterval(t); }, 200);
-scan();
-
-var n=0;
 window.addEventListener('message', function(e) {
   n++;
-  document.getElementById('cnt').textContent=n+' received';
-  var b=document.getElementById('mb'); b.className='box ok';
+  document.getElementById('cnt').textContent = n;
+  var b = document.getElementById('msgs'); b.className = 'box ok';
   var r=''; try{r=JSON.stringify(e.data,null,2);}catch(x){r=String(e.data);}
-  b.innerHTML='<b style="color:#38bdf8">Origin:</b> '+(e.origin||'?')+'<br><b style="color:#38bdf8">Data:</b><br><pre>'+r.slice(0,800)+'</pre>';
+  b.innerHTML = '<b style="color:#38bdf8">['+new Date().toISOString().slice(11,23)+'] Origin: '+(e.origin||'?')+'</b><br><pre>'+r.slice(0,1000)+'</pre>';
 });
 
-var ref=(document.referrer||'').match(/^(https?:\/\/[^\/]+)/);
-var base=ref?ref[1]:'https://mnzrventures.manager.io';
+function send(msg) {
+  try {
+    window.parent.postMessage(msg, '*');
+    document.getElementById('sent').className = 'box ok';
+    document.getElementById('sent').textContent = 'Sent: ' + JSON.stringify(msg);
+  } catch(e) {
+    document.getElementById('sent').textContent = 'Error: '+e;
+  }
+}
 
-function show(txt,ok){ var el=document.getElementById('fr'); el.className=ok?'box ok':'box err'; el.textContent=txt; }
+// Auto-send all formats on load
+var formats = [
+  {type:'requestContext'},
+  {type:'manager-extension-ready'},
+  {type:'ready'},
+  {type:'init'},
+  {type:'ping'},
+  'ready'
+];
+var fi = 0;
+function autoSend() {
+  if (fi < formats.length) {
+    try { window.parent.postMessage(formats[fi], '*'); } catch(e){}
+    fi++;
+    setTimeout(autoSend, 600);
+  }
+}
+autoSend();
 
-function tryNoAuth(){
-  show('Fetching with no auth…',false);
-  fetch(base+'/api2/sales-invoice-batch?PageSize=1')
-    .then(function(r){return r.text().then(function(t){show('HTTP '+r.status+' (no auth)\n\n'+t.slice(0,400),r.ok);});})
-    .catch(function(e){show('FAILED (no auth): '+e+'\n\napi-proxy.js is NOT intercepting fetches',false);});
-}
-function tryCookies(){
-  show('Fetching with session cookies…',false);
-  fetch(base+'/api2/sales-invoice-batch?PageSize=1',{credentials:'include'})
-    .then(function(r){return r.text().then(function(t){show('HTTP '+r.status+' (cookies)\n\n'+t.slice(0,400),r.ok);});})
-    .catch(function(e){show('FAILED (cookies): '+e,false);});
-}
-function tryToken(){
-  var ctx=window.managerAppContext;
-  if(!ctx){show('managerAppContext not set yet — wait for section 2 to show values, then retry',false);return;}
-  var tok=ctx.apiAccessToken||ctx.token||ctx.accessToken;
-  var ep=ctx.apiEndpoint||ctx.endpoint||base+'/api2';
-  if(!tok){show('No token found in managerAppContext: '+JSON.stringify(ctx),false);return;}
-  show('Fetching with Bearer token: '+tok.slice(0,20)+'...',false);
-  fetch(ep+'/sales-invoice-batch?PageSize=1',{headers:{'Authorization':'Bearer '+tok,'Accept':'application/json'}})
-    .then(function(r){return r.text().then(function(t){show('HTTP '+r.status+'\n\n'+t.slice(0,400),r.ok);});})
-    .catch(function(e){show('FAILED (token): '+e,false);});
-}
+// Scan globals every 300ms
+setInterval(function() {
+  var added = Object.keys(window).filter(function(k){return BASE.indexOf(k)===-1;});
+  var el = document.getElementById('globals');
+  if (!added.length) { el.textContent = '(none yet)'; }
+  else { el.className='box ok'; el.innerHTML = added.map(function(k){ return k+': '+JSON.stringify(window[k]).slice(0,80); }).join('\n'); }
+}, 300);
 </script>
 </body></html>
