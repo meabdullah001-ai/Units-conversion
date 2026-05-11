@@ -715,23 +715,57 @@ function receiveContext(payload, source) {
   launchApp();
 }
 
-// Test Manager.io bridge on startup — send a ping request
-// If we get a response, we're connected via bridge (no credentials needed)
+// Connect via Manager.io postMessage bridge on startup
+// Step 1: Verify bridge works using a known endpoint (sales-invoice-batch)
+// Step 2: Then fetch inventory items via bridge
 setTimeout(function() {
   if (ctxReceived) return;
-  managerRequest('/api4/inventory-item-batch?PageSize=1', function(err, data) {
+
+  // Known-working bridge endpoint (same as dashboard uses)
+  managerRequest('/api4/sales-invoice-batch?PageSize=1', function(err, data) {
     if (err) {
-      console.log('[DualUnits] Bridge test failed:', err.message);
-      return; // Fall through to manual/demo
+      console.log('[DualUnits] Bridge not available:', err.message);
+      return; // Bridge not working — user can use Manual Connect or Demo
     }
-    // Bridge works! We're connected
-    if (!ctxReceived) {
-      ctxReceived = true;
-      appMode = 'live';
-      ctx = { apiEndpoint: null, apiAccessToken: null, usingBridge: true,
-               currentPageUrl: window.location.href, businessName: 'Manager.io' };
-      launchApp();
-    }
+
+    // Bridge confirmed working — now we're connected
+    if (ctxReceived) return;
+    ctxReceived = true;
+    appMode = 'live';
+    ctx = { apiEndpoint: null, apiAccessToken: null, usingBridge: true,
+             currentPageUrl: 'Manager.io (bridge)', businessName: 'Manager.io' };
+    launchApp();
+
+    // Step 2: Fetch inventory items — try all known paths
+    var inventoryPaths = [
+      '/api4/inventory-item-batch?PageSize=99999',
+      '/api4/InventoryItem-batch?PageSize=99999',
+      '/api4/inventory-items?PageSize=99999',
+      '/api4/InventoryItems?PageSize=99999',
+    ];
+
+    (function tryNextPath(idx) {
+      if (idx >= inventoryPaths.length) {
+        showInventoryError(
+          'Could not load inventory items via Manager.io bridge.<br>' +
+          'Tried paths: ' + inventoryPaths.join(', ') + '<br><br>' +
+          'You can add items manually using the <strong>+ Custom Item</strong> button.'
+        );
+        return;
+      }
+      managerRequest(inventoryPaths[idx], function(err2, data2) {
+        if (err2) { tryNextPath(idx + 1); return; }
+        var items = extractItems(data2);
+        if (items.length === 0) { tryNextPath(idx + 1); return; }
+        // Success!
+        var loadEl = document.getElementById('items-loading');
+        if (loadEl) loadEl.style.display = 'none';
+        inventoryItems = items;
+        renderItemsTab();
+        populateCalcDropdown();
+        showToast('✓ ' + items.length + ' inventory items loaded from Manager.io');
+      });
+    })(0);
   });
 }, 300);
 
@@ -919,8 +953,8 @@ function setupTabUI() {
 function loadInventory() {
   var loadEl = document.getElementById('items-loading');
 
-  if (appMode === 'demo' || !ctx || !ctx.apiEndpoint || !ctx.apiAccessToken) {
-    // Demo items
+  // Only show demo items if explicitly in demo mode AND not using the Manager.io bridge
+  if (appMode === 'demo' && !ctx.usingBridge) {
     inventoryItems = [
       { key:'tile_6060', name:'60x60 Tiles',     code:'T-6060', buyPrice:45, sellPrice:50 },
       { key:'tile_3060', name:'30x60 Tiles',     code:'T-3060', buyPrice:30, sellPrice:35 },
@@ -942,34 +976,29 @@ function loadInventory() {
 
   // PRIMARY: Use the postMessage bridge (works automatically, no token needed)
   if (ctx.usingBridge || (!ctx.apiEndpoint && !ctx.apiAccessToken)) {
+
+    // Use items already fetched during the startup ping if available
+    if (window._bridgeItems && window._bridgeItems.length > 0) {
+      if (loadEl) loadEl.style.display = 'none';
+      inventoryItems = window._bridgeItems;
+      renderItemsTab();
+      populateCalcDropdown();
+      showToast('✓ ' + inventoryItems.length + ' items loaded from Manager.io');
+      return;
+    }
+
+    // Otherwise fetch now
     managerRequest('/api4/inventory-item-batch?PageSize=99999', function(err, data) {
-      if (err) {
-        // Bridge failed, try manual fallback
-        loadInventoryDirect();
-        return;
-      }
-      // Parse response from bridge
+      if (err) { loadInventoryDirect(); return; }
       var items = extractItems(data);
+      if (loadEl) loadEl.style.display = 'none';
       if (items.length > 0) {
-        if (loadEl) loadEl.style.display = 'none';
         inventoryItems = items;
         renderItemsTab();
         populateCalcDropdown();
         showToast('✓ ' + items.length + ' items loaded from Manager.io');
       } else {
-        // Try other paths
-        managerRequest('/api4/InventoryItem-batch?PageSize=99999', function(err2, data2) {
-          if (loadEl) loadEl.style.display = 'none';
-          var items2 = err2 ? [] : extractItems(data2);
-          if (items2.length > 0) {
-            inventoryItems = items2;
-            renderItemsTab();
-            populateCalcDropdown();
-            showToast('✓ ' + items2.length + ' items loaded');
-          } else {
-            showInventoryError('Connected to Manager.io but no inventory items found. Make sure you have inventory items set up in Manager.io.');
-          }
-        });
+        showInventoryError('Connected to Manager.io but no inventory items found. Check that you have inventory items set up in Manager.io → Inventory Items.');
       }
     });
     return;
