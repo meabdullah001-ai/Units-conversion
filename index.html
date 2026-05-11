@@ -645,69 +645,66 @@ function loadCreds()   { try { return JSON.parse(localStorage.getItem(CRED_KEY))
 function saveCreds(ep,tk){ try { localStorage.setItem(CRED_KEY, JSON.stringify({endpoint:ep,token:tk})); } catch(e){} }
 loadConfig();
 
-// ── Connection: try every known Manager.io context delivery method ──
-function tryExtractContext(data) {
-  if (!data || typeof data !== 'object') return null;
-  // Standard: { type:'manager-context', payload:{...} }
-  if (data.type === 'manager-context' && data.payload) return data.payload;
-  // Direct: { apiEndpoint, apiAccessToken }
-  if (data.apiEndpoint && data.apiAccessToken) return data;
-  // Nested payload without type
-  if (data.payload && data.payload.apiEndpoint) return data.payload;
-  return null;
+// ── Manager.io postMessage Bridge ─────────────────────────────
+// The correct mechanism: send {type:'api-request'} to window.parent
+// Manager.io handles auth internally and sends back the response
+// No token, no CORS — works automatically inside Manager.io iframe
+
+var _pendingRequests = {};
+
+function managerRequest(path, callback) {
+  var requestId = 'du-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  var done = false;
+
+  _pendingRequests[requestId] = function(data) {
+    if (done) return;
+    done = true;
+    delete _pendingRequests[requestId];
+    callback(null, data);
+  };
+
+  setTimeout(function() {
+    if (done) return;
+    done = true;
+    delete _pendingRequests[requestId];
+    callback(new Error('timeout'));
+  }, 8000);
+
+  try {
+    window.parent.postMessage({
+      type: 'api-request',
+      method: 'GET',
+      path: path,
+      requestId: requestId
+    }, '*');
+  } catch(e) {
+    callback(e);
+  }
 }
 
-// 1. postMessage listener — catches messages from parent (iframe) AND opener (popup)
+// Listen for responses from Manager.io
 window.addEventListener('message', function(ev) {
   var data = ev.data;
-  try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
-  var payload = tryExtractContext(data);
-  if (!payload) return;
-  receiveContext(payload, 'postMessage from ' + (ev.origin || '?'));
+  if (!data || typeof data !== 'object') return;
+
+  // Handle api-request responses
+  if (data.requestId && _pendingRequests[data.requestId]) {
+    _pendingRequests[data.requestId](data);
+    return;
+  }
+
+  // Also handle legacy manager-context format (just in case)
+  if (ctxReceived) return;
+  var payload = null;
+  if (data.type === 'manager-context' && data.payload) payload = data.payload;
+  else if (data.apiEndpoint && data.apiAccessToken) payload = data;
+  if (payload) receiveContext(payload, 'postMessage');
 });
 
-// 2. Signal readiness to BOTH parent (iframe mode) and opener (popup mode)
-//    Manager.io may wait for this before sending context
-setTimeout(function() {
-  try { window.parent.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
-  try { if (window.opener) window.opener.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
-}, 100);
-setTimeout(function() {
-  try { window.parent.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
-  try { if (window.opener) window.opener.postMessage({ type:'manager-extension-ready' }, '*'); } catch(e) {}
-}, 500);
-
-// 3. window.name
+// Auto-detect domain from referrer for fallback fetch
 try {
-  if (window.name && window.name.length > 10) {
-    var nameData = JSON.parse(window.name);
-    var nameCtx  = tryExtractContext(nameData);
-    if (nameCtx) receiveContext(nameCtx, 'window.name');
-  }
-} catch(e) {}
-
-// 4. URL query parameters
-try {
-  var params = new URLSearchParams(window.location.search);
-  ['context','payload','ctx','managerContext'].forEach(function(key) {
-    var val = params.get(key);
-    if (!val) return;
-    try {
-      var parsed = JSON.parse(atob(val));
-      var pCtx   = tryExtractContext(parsed);
-      if (pCtx) receiveContext(pCtx, 'URL param: '+key);
-    } catch(e) {}
-  });
-} catch(e) {}
-
-// 5. Auto-detect Manager.io domain from document.referrer
-//    e.g. referrer = https://mnzrventures.manager.io/sales-invoices -> base = https://mnzrventures.manager.io
-try {
-  var ref = document.referrer;
-  if (ref && ref.includes('manager.io')) {
-    var refBase = ref.replace(/^(https?:\/\/[^\/]+).*/, '$1');
-    window._detectedManagerBase = refBase;
-  }
+  var _ref = document.referrer;
+  if (_ref) window._detectedManagerBase = _ref.match(/(https?:\/\/[^\/]+)/)[1];
 } catch(e) {}
 
 function receiveContext(payload, source) {
@@ -715,11 +712,28 @@ function receiveContext(payload, source) {
   ctxReceived = true;
   appMode = 'live';
   ctx = payload;
-  console.log('[DualUnits] Context received via', source);
-  debugLog.push({ time: now(), origin: source, data: 'Context received ✓' });
-  renderDebugLog();
   launchApp();
 }
+
+// Test Manager.io bridge on startup — send a ping request
+// If we get a response, we're connected via bridge (no credentials needed)
+setTimeout(function() {
+  if (ctxReceived) return;
+  managerRequest('/api4/inventory-item-batch?PageSize=1', function(err, data) {
+    if (err) {
+      console.log('[DualUnits] Bridge test failed:', err.message);
+      return; // Fall through to manual/demo
+    }
+    // Bridge works! We're connected
+    if (!ctxReceived) {
+      ctxReceived = true;
+      appMode = 'live';
+      ctx = { apiEndpoint: null, apiAccessToken: null, usingBridge: true,
+               currentPageUrl: window.location.href, businessName: 'Manager.io' };
+      launchApp();
+    }
+  });
+}, 300);
 
 // ── Debug helpers ──────────────────────────────────────────────
 function now() { return new Date().toISOString().slice(11,19); }
@@ -920,57 +934,95 @@ function loadInventory() {
     return;
   }
 
-  // Live API fetch
+  // Use Manager.io postMessage bridge (primary) or direct fetch (fallback)
   if (loadEl) {
     loadEl.style.display = 'flex';
     loadEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div> <span>Loading from Manager.io…</span>';
   }
 
-  var savedBase = (ctx.apiEndpoint || '').replace(/\/+$/, '');
-  var headers   = { 'Authorization': 'Bearer ' + ctx.apiAccessToken };
+  // PRIMARY: Use the postMessage bridge (works automatically, no token needed)
+  if (ctx.usingBridge || (!ctx.apiEndpoint && !ctx.apiAccessToken)) {
+    managerRequest('/api4/inventory-item-batch?PageSize=99999', function(err, data) {
+      if (err) {
+        // Bridge failed, try manual fallback
+        loadInventoryDirect();
+        return;
+      }
+      // Parse response from bridge
+      var items = extractItems(data);
+      if (items.length > 0) {
+        if (loadEl) loadEl.style.display = 'none';
+        inventoryItems = items;
+        renderItemsTab();
+        populateCalcDropdown();
+        showToast('✓ ' + items.length + ' items loaded from Manager.io');
+      } else {
+        // Try other paths
+        managerRequest('/api4/InventoryItem-batch?PageSize=99999', function(err2, data2) {
+          if (loadEl) loadEl.style.display = 'none';
+          var items2 = err2 ? [] : extractItems(data2);
+          if (items2.length > 0) {
+            inventoryItems = items2;
+            renderItemsTab();
+            populateCalcDropdown();
+            showToast('✓ ' + items2.length + ' items loaded');
+          } else {
+            showInventoryError('Connected to Manager.io but no inventory items found. Make sure you have inventory items set up in Manager.io.');
+          }
+        });
+      }
+    });
+    return;
+  }
 
-  // Build a list of base URLs to try — including the auto-detected Manager.io domain
-  var basesToTry = [savedBase];
+  // FALLBACK: Direct fetch with saved credentials
+  loadInventoryDirect();
+}
 
-  // No extra guessing — use exactly what the user entered from Settings → API Access
+function extractItems(data) {
+  // Extract items from Manager.io bridge response
+  var raw = [];
+  if (Array.isArray(data)) raw = data;
+  else if (data && Array.isArray(data.data)) raw = data.data;
+  else if (data && Array.isArray(data.items)) raw = data.items;
+  else if (data && data.response && Array.isArray(data.response)) raw = data.response;
+  else if (data && data.body) {
+    try { var b = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
+      raw = Array.isArray(b) ? b : (b.data || b.items || []); } catch(e) {}
+  }
+  return raw.map(function(it) {
+    return {
+      key:       it.key||it.Key||it.id||it.Id||String(Math.random()),
+      name:      it.name||it.Name||it.itemName||it.ItemName||it.description||'',
+      code:      it.code||it.Code||it.itemCode||'',
+      buyPrice:  parseFloat(it.purchasePrice||it.PurchasePrice||it.buyPrice||0)||0,
+      sellPrice: parseFloat(it.salesPrice||it.SalesPrice||it.salePrice||it.sellPrice||0)||0,
+    };
+  }).filter(function(it){ return it.name; });
+}
 
-  // Build endpoint URLs from the saved base
-  var allUrls = [
-    savedBase + '/inventory-item-batch',
-    savedBase + '/InventoryItem-batch',
-    savedBase + '/inventory-items',
-  ];
-
-  tryFetchEndpoints(allUrls, headers).then(function(items) {
+function loadInventoryDirect() {
+  var loadEl = document.getElementById('items-loading');
+  var base  = (ctx.apiEndpoint||'').replace(/\/+$/,'');
+  var token = ctx.apiAccessToken||'';
+  if (!base || !token) {
+    if (loadEl) loadEl.style.display = 'none';
+    showInventoryError('No credentials. Use Manual Connect tab to enter your Manager.io endpoint and access token.');
+    return;
+  }
+  var headers = {'Authorization':'Bearer '+token};
+  var urls = [base+'/inventory-item-batch', base+'/InventoryItem-batch', base+'/inventory-items'];
+  tryFetchEndpoints(urls, headers).then(function(items) {
     if (loadEl) loadEl.style.display = 'none';
     if (items && items.length > 0) {
-      inventoryItems = items;
-      renderItemsTab();
-      populateCalcDropdown();
-      showToast('✓ ' + items.length + ' items loaded');
+      inventoryItems = items; renderItemsTab(); populateCalcDropdown();
+      showToast('✓ '+items.length+' items loaded');
     } else {
-      showInventoryError(
-        '<strong>No items found.</strong> Tried these URLs:<br>' +
-        allUrls.map(function(u){ return '• <code>'+u+'</code>'; }).join('<br>') +
-        '<br><br>Please update your endpoint in <strong>Manual Connect</strong>.<br>' +
-        'For Manager.io Cloud your endpoint should be:<br>' +
-        '<code>https://mnzrventures.manager.io/api2</code><br>' +
-        '(replace <em>mnzrventures</em> with your actual business handle)'
-      );
+      showInventoryError('No items returned from API. Check your endpoint URL: <code>'+base+'</code>');
     }
   }).catch(function(err) {
     if (loadEl) loadEl.style.display = 'none';
-    var msg = String(err);
-    var isCors = msg.toLowerCase().includes('failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed');
-    showInventoryError(
-      (isCors
-        ? '<strong>⚠ CORS / Network Error</strong> — the browser blocked the API call.<br><br>'
-        : '<strong>⚠ API Error:</strong> ' + msg + '<br><br>') +
-      '<strong>For Manager.io Cloud, try updating your endpoint to:</strong><br>' +
-      '<code>https://YOUR-BUSINESS.manager.io/api2</code><br>' +
-      '(e.g. <code>https://mnzrventures.manager.io/api2</code>)<br><br>' +
-      'Then go to <strong>Manual Connect</strong> tab and reconnect.'
-    );
+    showInventoryError('API error: '+String(err)+'<br>Check your endpoint and token in Manual Connect tab.');
   });
 }
 
