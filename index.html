@@ -3,1398 +3,568 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dual Units · Manager.io Extension</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<title>Dual Units · Manager.io</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --navy:    #1B3A5C;
-    --navy-dk: #102440;
-    --blue:    #2563EB;
-    --blue-lt: #EFF6FF;
-    --green:   #16A34A;
-    --green-lt:#F0FDF4;
-    --amber:   #D97706;
-    --amber-lt:#FFFBEB;
-    --red:     #DC2626;
-    --red-lt:  #FEF2F2;
-    --gray-50: #F8FAFC;
-    --gray-100:#F1F5F9;
-    --gray-200:#E2E8F0;
-    --gray-300:#CBD5E1;
-    --gray-400:#94A3B8;
-    --gray-500:#64748B;
-    --gray-700:#334155;
-    --gray-900:#0F172A;
-    --radius:  8px;
-    --shadow:  0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06);
-    --shadow-md: 0 4px 6px -1px rgba(0,0,0,.1), 0 2px 4px -1px rgba(0,0,0,.06);
-  }
-
-  body {
-    font-family: 'Inter', system-ui, sans-serif;
-    font-size: 13px;
-    color: var(--gray-900);
-    background: #F0F4F8;
-    min-height: 100vh;
-    padding: 0;
-  }
-
-  /* ── Top bar ── */
-  #topbar {
-    background: var(--navy);
-    color: #fff;
-    padding: 0 16px;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-  .topbar-logo { font-size: 18px; }
-  .topbar-title { font-size: 15px; font-weight: 700; letter-spacing: -.2px; flex: 1; }
-  .topbar-version { font-size: 11px; color: rgba(255,255,255,.5); }
-  #status-pill {
-    display: flex; align-items: center; gap: 5px;
-    padding: 4px 10px; border-radius: 20px;
-    background: rgba(255,255,255,.12);
-    font-size: 11.5px; font-weight: 500;
-  }
-  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #94A3B8; }
-  .status-dot.connected { background: #4ADE80; box-shadow: 0 0 5px rgba(74,222,128,.6); }
-  .status-dot.loading { background: #FCD34D; animation: pulse 1s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-
-  /* ── Tabs ── */
-  #tabs {
-    background: #fff;
-    border-bottom: 1px solid var(--gray-200);
-    padding: 0 16px;
-    display: flex;
-    gap: 2px;
-  }
-  .tab-btn {
-    padding: 10px 14px; border: none; background: none; cursor: pointer;
-    font-family: inherit; font-size: 12.5px; font-weight: 500;
-    color: var(--gray-500); border-bottom: 2px solid transparent;
-    transition: all .15s; white-space: nowrap;
-  }
-  .tab-btn:hover { color: var(--navy); }
-  .tab-btn.active { color: var(--navy); border-bottom-color: var(--navy); font-weight: 600; }
-
-  /* ── Main layout ── */
-  #main { padding: 14px 14px 40px; display: flex; flex-direction: column; gap: 12px; }
-
-  .tab-pane { display: none; flex-direction: column; gap: 12px; }
-  .tab-pane.active { display: flex; }
-
-  /* ── Cards ── */
-  .card {
-    background: #fff; border: 1px solid var(--gray-200);
-    border-radius: var(--radius); overflow: hidden;
-    box-shadow: var(--shadow);
-  }
-  .card-header {
-    padding: 11px 14px; background: var(--gray-50);
-    border-bottom: 1px solid var(--gray-200);
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .card-title { font-size: 12px; font-weight: 700; color: var(--gray-700); text-transform: uppercase; letter-spacing: .5px; }
-  .card-body { padding: 14px; }
-
-  /* ── Context banner ── */
-  #ctx-banner {
-    background: var(--blue-lt); border: 1px solid #BFDBFE;
-    border-radius: var(--radius); padding: 10px 14px;
-    display: flex; align-items: center; gap: 10px; font-size: 12px; color: #1E40AF;
-  }
-  .ctx-icon { font-size: 15px; }
-  .ctx-page { font-weight: 600; }
-
-  /* ── Connecting state ── */
-  #connecting-view { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 16px; text-align: center; }
-  .spinner { width: 32px; height: 32px; border: 3px solid var(--gray-200); border-top-color: var(--navy); border-radius: 50%; animation: spin .7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .conn-title { font-size: 15px; font-weight: 600; color: var(--gray-700); }
-  .conn-sub { font-size: 12px; color: var(--gray-500); line-height: 1.6; max-width: 280px; }
-  .conn-hint { background: var(--amber-lt); border: 1px solid #FDE68A; border-radius: var(--radius); padding: 10px 14px; font-size: 12px; color: #92400E; line-height: 1.6; max-width: 320px; }
-  .conn-hint code { background: rgba(0,0,0,.07); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
-
-  /* ── Calculator ── */
-  #calc-item-select {
-    width: 100%; padding: 9px 11px; border: 1.5px solid var(--gray-200);
-    border-radius: var(--radius); font-family: inherit; font-size: 13px;
-    background: #fff; color: var(--gray-900); transition: border-color .15s;
-  }
-  #calc-item-select:focus { outline: none; border-color: var(--navy); }
-
-  .ratio-badge {
-    background: linear-gradient(135deg, #EFF6FF, #DBEAFE);
-    border: 1px solid #BFDBFE; border-radius: 6px;
-    padding: 8px 14px; text-align: center; font-size: 13px; font-weight: 700; color: var(--navy);
-  }
-
-  .converter-grid { display: grid; grid-template-columns: 1fr 32px 1fr; align-items: end; gap: 8px; }
-  .conv-col { display: flex; flex-direction: column; gap: 5px; }
-  .conv-col label { font-size: 11px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: .4px; }
-  .unit-badge {
-    background: var(--navy); color: #fff;
-    font-size: 10px; font-weight: 600;
-    padding: 2px 7px; border-radius: 20px;
-    display: inline-block; margin-bottom: 2px;
-    text-transform: uppercase; letter-spacing: .3px;
-  }
-  .conv-input {
-    width: 100%; padding: 11px 10px; border: 1.5px solid var(--gray-200);
-    border-radius: var(--radius); font-family: inherit; font-size: 18px;
-    font-weight: 700; text-align: center; color: var(--gray-900);
-    background: var(--gray-50); transition: all .15s;
-  }
-  .conv-input:focus { outline: none; border-color: var(--navy); background: #fff; box-shadow: 0 0 0 3px rgba(27,58,92,.1); }
-  .conv-input.has-val { background: #fff; border-color: var(--navy); color: var(--navy); }
-  .price-hint { font-size: 11px; color: var(--gray-400); text-align: center; min-height: 14px; margin-top: 1px; }
-  .arrow-col { display: flex; align-items: center; justify-content: center; padding-bottom: 18px; font-size: 18px; color: var(--gray-400); }
-
-  .fill-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
-  .fill-btn {
-    padding: 8px 10px; border: none; border-radius: var(--radius);
-    background: var(--navy); color: #fff; cursor: pointer;
-    font-family: inherit; font-size: 12px; font-weight: 600;
-    transition: background .15s; display: flex; align-items: center; justify-content: center; gap: 5px;
-  }
-  .fill-btn:hover { background: var(--navy-dk); }
-  .fill-btn.secondary { background: var(--gray-100); color: var(--gray-700); border: 1px solid var(--gray-200); }
-  .fill-btn.secondary:hover { background: var(--gray-200); }
-
-  /* ── Price summary ── */
-  .price-summary-box {
-    background: var(--green-lt); border: 1px solid #BBF7D0;
-    border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;
-  }
-  .ps-title { font-size: 11px; font-weight: 700; color: #14532D; text-transform: uppercase; letter-spacing: .4px; }
-  .ps-row { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: #166534; }
-  .ps-val { font-weight: 700; font-size: 14px; color: #15803D; }
-
-  /* ── Active field indicator ── */
-  .field-indicator {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 12px; background: var(--gray-50);
-    border: 1px solid var(--gray-200); border-radius: var(--radius);
-    font-size: 12px; color: var(--gray-500);
-  }
-  .field-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gray-300); flex-shrink: 0; transition: all .2s; }
-  .field-dot.active { background: var(--green); box-shadow: 0 0 5px rgba(22,163,74,.5); }
-  .field-name { color: var(--gray-700); font-weight: 500; }
-
-  /* ── Items management ── */
-  .items-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-  #search-items { flex: 1; min-width: 140px; padding: 7px 11px; border: 1.5px solid var(--gray-200); border-radius: var(--radius); font-family: inherit; font-size: 13px; }
-  #search-items:focus { outline: none; border-color: var(--navy); }
-  .btn-add { padding: 7px 14px; background: var(--navy); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; transition: background .15s; }
-  .btn-add:hover { background: var(--navy-dk); }
-
-  .items-grid { display: flex; flex-direction: column; gap: 8px; }
-  .item-row {
-    background: #fff; border: 1.5px solid var(--gray-200);
-    border-radius: var(--radius); padding: 12px 14px;
-    display: flex; align-items: center; gap: 10px; transition: border-color .15s;
-  }
-  .item-row:hover { border-color: var(--gray-300); }
-  .item-row.has-dual { border-left: 3px solid var(--navy); }
-  .item-info { flex: 1; min-width: 0; }
-  .item-name { font-size: 13.5px; font-weight: 600; color: var(--gray-900); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .item-sub { font-size: 11.5px; color: var(--gray-500); margin-top: 2px; }
-  .item-actions { display: flex; gap: 6px; flex-shrink: 0; }
-  .btn-sm { padding: 5px 10px; border: 1px solid var(--gray-200); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 500; color: var(--gray-700); transition: all .15s; }
-  .btn-sm:hover { background: var(--gray-100); }
-  .btn-sm.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
-  .btn-sm.primary:hover { background: var(--navy-dk); }
-  .btn-sm.danger { color: var(--red); border-color: #FECACA; }
-  .btn-sm.danger:hover { background: var(--red-lt); }
-
-  /* ── Item Edit Form ── */
-  .edit-form-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.45);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 200; padding: 16px;
-  }
-  .edit-form {
-    background: #fff; border-radius: 12px; padding: 20px;
-    width: 100%; max-width: 380px; box-shadow: var(--shadow-md);
-    display: flex; flex-direction: column; gap: 14px;
-  }
-  .ef-title { font-size: 15px; font-weight: 700; color: var(--gray-900); }
-  .ef-item-name { font-size: 12.5px; color: var(--gray-500); }
-  .ef-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .ef-group { display: flex; flex-direction: column; gap: 5px; }
-  .ef-group label { font-size: 11px; font-weight: 700; color: var(--gray-500); text-transform: uppercase; letter-spacing: .4px; }
-  .ef-input {
-    width: 100%; padding: 8px 10px; border: 1.5px solid var(--gray-200);
-    border-radius: var(--radius); font-family: inherit; font-size: 13px;
-    color: var(--gray-900); transition: border-color .15s;
-  }
-  .ef-input:focus { outline: none; border-color: var(--navy); }
-  .ef-ratio-hint { font-size: 11.5px; color: var(--gray-500); background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius); padding: 8px 10px; line-height: 1.5; }
-  .ef-ratio-hint strong { color: var(--navy); }
-  .ef-actions { display: flex; gap: 8px; }
-  .ef-save { flex: 1; padding: 9px; background: var(--navy); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; transition: background .15s; }
-  .ef-save:hover { background: var(--navy-dk); }
-  .ef-cancel { padding: 9px 16px; border: 1.5px solid var(--gray-200); background: #fff; border-radius: var(--radius); cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--gray-700); transition: all .15s; }
-  .ef-cancel:hover { background: var(--gray-100); }
-
-  /* ── Invoice view ── */
-  .invoice-items-list { display: flex; flex-direction: column; gap: 6px; }
-  .inv-item-row { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius); padding: 10px 12px; }
-  .inv-item-top { display: flex; justify-content: space-between; align-items: center; }
-  .inv-item-name { font-size: 13px; font-weight: 600; color: var(--gray-900); }
-  .inv-no-dual { font-size: 11.5px; color: var(--gray-400); font-style: italic; }
-  .inv-dual-info { margin-top: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .inv-unit-box { background: #fff; border: 1px solid var(--gray-200); border-radius: 6px; padding: 7px 10px; text-align: center; }
-  .inv-unit-label { font-size: 10px; font-weight: 600; color: var(--gray-500); text-transform: uppercase; letter-spacing: .3px; }
-  .inv-unit-val { font-size: 16px; font-weight: 700; color: var(--navy); }
-  .inv-unit-price { font-size: 11px; color: var(--gray-500); margin-top: 1px; }
-
-  /* ── Empty state ── */
-  .empty-state { text-align: center; padding: 28px 16px; color: var(--gray-400); }
-  .empty-icon { font-size: 32px; margin-bottom: 8px; }
-  .empty-title { font-size: 14px; font-weight: 600; color: var(--gray-500); }
-  .empty-sub { font-size: 12px; margin-top: 4px; line-height: 1.5; }
-
-  /* ── Toast ── */
-  #toast {
-    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(60px);
-    background: var(--gray-900); color: #fff; padding: 9px 18px; border-radius: 20px;
-    font-size: 12.5px; font-weight: 500; z-index: 999; transition: transform .25s ease;
-    white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.25);
-  }
-  #toast.show { transform: translateX(-50%) translateY(0); }
-
-  /* ── Util ── */
-  .tag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-  .tag-blue { background: var(--blue-lt); color: #1D4ED8; }
-  .tag-green { background: var(--green-lt); color: #15803D; }
-  .tag-gray { background: var(--gray-100); color: var(--gray-500); }
-  hr.divider { border: none; border-top: 1px solid var(--gray-200); }
-  .section-label { font-size: 11px; font-weight: 700; color: var(--gray-400); text-transform: uppercase; letter-spacing: .5px; }
-  .loading-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--gray-500); padding: 10px 0; }
-
-  /* ── Connect screen ── */
-  #main { display:flex; justify-content:center; padding:20px 16px 40px; }
-  #connecting-view { width:100%; max-width:420px; display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; }
-  .conn-tabs { display:flex; background:var(--gray-100); border-radius:8px; padding:3px; gap:2px; width:100%; }
-  .conn-tab { flex:1; padding:7px; border:none; background:none; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:500; color:var(--gray-500); transition:all .15s; }
-  .conn-tab.active { background:#fff; color:var(--navy); font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,.1); }
-  .conn-panel { display:none; width:100%; text-align:left; flex-direction:column; gap:10px; }
-  .conn-panel.active { display:flex; }
-  .mc-group { display:flex; flex-direction:column; gap:5px; }
-  .mc-label { font-size:11px; font-weight:700; color:var(--gray-500); text-transform:uppercase; letter-spacing:.4px; }
-  .mc-input { width:100%; padding:9px 11px; border:1.5px solid var(--gray-200); border-radius:var(--radius); font-family:inherit; font-size:13px; color:var(--gray-900); transition:border-color .15s; box-sizing:border-box; }
-  .mc-input:focus { outline:none; border-color:var(--navy); }
-  .mc-hint { font-size:11.5px; color:var(--gray-500); line-height:1.6; background:var(--gray-50); border:1px solid var(--gray-200); border-radius:var(--radius); padding:9px 11px; }
-  .mc-hint code { background:var(--gray-200); padding:1px 5px; border-radius:3px; font-size:11px; }
-  .mc-connect-btn { width:100%; padding:11px; background:var(--navy); color:#fff; border:none; border-radius:var(--radius); cursor:pointer; font-family:inherit; font-size:14px; font-weight:700; transition:background .15s; }
-  .mc-connect-btn:hover { background:var(--navy-dk); }
-  .mc-error { display:none; font-size:12px; color:var(--red); background:var(--red-lt); border:1px solid #fecaca; border-radius:var(--radius); padding:9px 11px; }
-  .mc-saved-pill { display:none; align-items:center; gap:6px; background:var(--green-lt); border:1px solid #bbf7d0; border-radius:20px; padding:5px 12px; font-size:12px; font-weight:600; color:var(--green); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .tab-active { border-bottom: 2px solid #1e3a5c; color: #1e3a5c; font-weight:600; }
+  .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:50; }
 </style>
 </head>
-<body>
+<body class="bg-gray-50 text-gray-800 text-sm">
 
-<!-- Top bar -->
-<div id="topbar">
-  <span class="topbar-logo">⚖</span>
-  <span class="topbar-title">Dual Units</span>
-  <div id="status-pill">
-    <div class="status-dot loading" id="status-dot"></div>
-    <span id="status-text">Connecting…</span>
+<div class="max-w-2xl mx-auto">
+
+  <!-- Header -->
+  <div class="bg-[#1e3a5c] text-white px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <span class="text-lg">⚖</span>
+      <span class="font-bold text-base">Dual Units</span>
+      <span class="text-xs text-white/50 ml-1">v2.0</span>
+    </div>
+    <div id="status" class="flex items-center gap-2 text-xs">
+      <span id="status-dot" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
   </div>
-  <span class="topbar-version">v1.0</span>
-</div>
 
-<!-- Connecting splash -->
-<div id="main">
-  <div id="connecting-view">
-
-    <!-- Logo + status -->
-    <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
-      <div style="width:52px;height:52px;background:var(--navy);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px">⚖</div>
-      <div style="font-size:17px;font-weight:700;color:var(--gray-900)">Dual Units</div>
-      <div id="mc-saved-pill" class="mc-saved-pill">✓ Saved credentials found</div>
-    </div>
-
-    <!-- Tab switcher -->
-    <div class="conn-tabs">
-      <button class="conn-tab active" data-conn-tab="auto">⚡ Auto (Manager.io)</button>
-      <button class="conn-tab" data-conn-tab="manual">🔑 Manual Connect</button>
-      <button class="conn-tab" data-conn-tab="demo">▶ Demo</button>
-    </div>
-
-    <!-- AUTO tab -->
-    <div class="conn-panel active" id="conn-auto">
-      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0">
-        <div class="spinner" id="auto-spinner"></div>
-        <div style="font-size:13px;font-weight:600;color:var(--gray-700)" id="auto-status-text">Waiting for Manager.io…</div>
-        <div style="font-size:12px;color:var(--gray-500);line-height:1.6;text-align:center">
-          This page must be opened <strong>inside Manager.io</strong>, not in a separate browser tab.
-        </div>
-      </div>
-      <div class="mc-hint" style="background:#fef9c3;border-color:#fde047;color:#713f12">
-        <strong>⚠ If you are reading this inside Manager.io</strong> — the Auto tab should connect automatically. If it hasn't after 10 seconds, use the <strong>Manual Connect</strong> tab instead.<br><br>
-        <strong>⚠ If you opened this URL in a new tab</strong> — that won't work. You must add it as a Manager.io Extension:<br>
-        1. In Manager.io → <strong>Settings → Extensions → New Extension</strong><br>
-        2. Paste this page's GitHub URL as the <strong>Endpoint</strong><br>
-        3. Set Placement to <code>/</code><br>
-        4. Save — then go to any Manager.io page and <strong>scroll to the bottom</strong> to see the panel
-      </div>
-      <!-- Debug log -->
-      <div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
-          <span style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.4px">Message log</span>
-          <span id="debug-count" style="font-size:11px;color:var(--gray-400)">0 received</span>
-        </div>
-        <div id="debug-log" style="background:#0f172a;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#94A3B8;max-height:100px;overflow-y:auto;min-height:36px">
-          <span style="color:#475569">Listening for postMessage from Manager.io…</span>
-        </div>
-      </div>
-      <div id="debug-error" style="display:none;font-size:12px;color:var(--red);background:var(--red-lt);border:1px solid #fecaca;border-radius:var(--radius);padding:9px 11px;"></div>
-    </div>
-
-    <!-- MANUAL tab -->
-    <div class="conn-panel" id="conn-manual">
-      <div class="mc-hint">
-        <strong>Step 1 — Get your endpoint &amp; token from Manager.io:</strong><br>
-        Go to <strong>Settings → API Access → New Access Token</strong><br><br>
-        Manager.io will show you two things — copy both:<br>
-        • <strong>Endpoint:</strong> looks like<br>
-        &nbsp;&nbsp;<code>https://XXXX.ip.manager.cloud/api2</code><br>
-        • <strong>Secret</strong> (your access token)<br><br>
-        ⚠ Copy the Secret immediately — Manager.io only shows it once!<br><br>
-        <strong>Step 2 — Clear old credentials</strong> (red button below), then enter the fresh Endpoint + Secret and click Connect.
-      </div>
-      <div class="mc-group">
-        <label class="mc-label">API Endpoint URL</label>
-        <input class="mc-input" id="mc-endpoint" type="url" placeholder="https://XXXX.ip.manager.cloud/api2" spellcheck="false">
-      </div>
-      <div class="mc-group">
-        <label class="mc-label">API Access Token</label>
-        <input class="mc-input" id="mc-token" type="password" placeholder="Paste your token here" spellcheck="false">
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--gray-700);cursor:pointer">
-        <input type="checkbox" id="mc-remember" checked style="width:14px;height:14px">
-        Remember credentials in this browser
-      </label>
-      <button id="mc-clear-btn" style="background:#fee2e2;color:#dc2626;border:1px solid #fecaca;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left">
-        🗑 Clear saved credentials &amp; reset
-      </button>
-      <div class="mc-error" id="mc-error"></div>
-      <button class="mc-connect-btn" id="mc-connect-btn">Connect to Manager.io</button>
-    </div>
-
-    <!-- DEMO tab -->
-    <div class="conn-panel" id="conn-demo">
-      <div class="mc-hint">
-        Demo mode loads sample inventory items so you can explore the extension without a Manager.io connection. Your dual-unit configurations will still be saved locally.
-      </div>
-      <button class="mc-connect-btn" id="demo-connect-btn" style="background:#475569">▶ Launch Demo Mode</button>
-    </div>
-
-  </div>
-</div>
-
-<!-- Main app (hidden until context received) -->
-<div id="app-view" style="display:none">
   <!-- Tabs -->
-  <div id="tabs">
-    <button class="tab-btn active" data-tab="calculator">⟳ Calculator</button>
-    <button class="tab-btn" data-tab="items">📦 Items</button>
-    <button class="tab-btn" data-tab="invoice">🧾 Invoice View</button>
-    <button class="tab-btn" data-tab="help">? Help</button>
+  <div class="flex border-b bg-white px-2">
+    <button onclick="showTab('calculator')" id="tab-calculator" class="px-4 py-2.5 text-sm tab-active">⟳ Calculator</button>
+    <button onclick="showTab('items')"      id="tab-items"      class="px-4 py-2.5 text-sm text-gray-500">📦 Items</button>
+    <button onclick="showTab('invoice')"    id="tab-invoice"    class="px-4 py-2.5 text-sm text-gray-500">🧾 Invoice</button>
+    <button onclick="showTab('help')"       id="tab-help"       class="px-4 py-2.5 text-sm text-gray-500">? Help</button>
   </div>
 
-  <div id="main-app" style="padding:14px 14px 40px; display:flex; flex-direction:column; gap:12px;">
+  <!-- ── CALCULATOR TAB ── -->
+  <div id="view-calculator" class="tab-view p-4 space-y-4">
 
-    <!-- Context banner -->
-    <div id="ctx-banner">
-      <span class="ctx-icon">📍</span>
-      <div>
-        <span>Manager Page: </span><span class="ctx-page" id="ctx-page-label">—</span>
-        <span style="color:#93C5FD; margin:0 6px;">·</span>
-        <span id="ctx-business-label" style="font-weight:500"></span>
+    <div class="bg-white rounded-lg border shadow-sm p-4 space-y-3">
+      <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide">Select Item</label>
+      <select id="calc-select" onchange="onCalcItemSelect()"
+        class="w-full border rounded-lg p-2.5 text-sm focus:outline-none focus:border-[#1e3a5c]">
+        <option value="">— Select an inventory item —</option>
+      </select>
+      <div id="no-dual-hint" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+        This item has no dual unit configured. Go to <strong>Items</strong> tab → find the item → click <strong>Set Dual</strong>.
       </div>
     </div>
 
-    <!-- ── CALCULATOR TAB ── -->
-    <div class="tab-pane active" id="tab-calculator">
+    <div id="calc-body" class="hidden bg-white rounded-lg border shadow-sm p-4 space-y-4">
+      <div id="ratio-pill" class="text-center text-xs font-bold bg-blue-50 border border-blue-200 text-blue-800 rounded-full py-1.5 px-4"></div>
 
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Select Item</span>
-          <span class="tag tag-blue" id="calc-items-count"></span>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="space-y-1">
+          <label id="lbl-u1" class="block text-xs font-bold text-[#1e3a5c] uppercase tracking-wide">Unit 1</label>
+          <input id="val-u1" type="number" placeholder="0" min="0" step="0.001"
+            oninput="calcConvert(1)"
+            class="w-full border rounded-lg p-3 text-xl font-bold text-center focus:outline-none focus:border-[#1e3a5c]">
+          <div id="ph-u1" class="text-xs text-gray-400 text-center h-4"></div>
         </div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-          <select id="calc-item-select">
-            <option value="">— Loading items… —</option>
-          </select>
-          <div id="calc-no-dual" style="display:none" class="conn-hint" style="font-size:12px">
-            This item has no dual unit configured. Go to <strong>Items</strong> tab → find this item → click <strong>Set Dual Unit</strong>.
-          </div>
-        </div>
-      </div>
-
-      <div class="card" id="calc-body" style="display:none">
-        <div class="card-header">
-          <span class="card-title">Convert</span>
-          <div id="ratio-badge" class="ratio-badge" style="font-size:12px; padding:4px 12px;"></div>
-        </div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
-          <div class="converter-grid">
-            <div class="conv-col">
-              <label id="calc-lbl-u1">Unit 1</label>
-              <span class="unit-badge" id="calc-badge-u1"></span>
-              <input type="number" class="conv-input" id="calc-val-u1" placeholder="0" min="0" step="0.001">
-              <div class="price-hint" id="calc-ph1"></div>
-            </div>
-            <div class="arrow-col">⇌</div>
-            <div class="conv-col">
-              <label id="calc-lbl-u2">Unit 2</label>
-              <span class="unit-badge" id="calc-badge-u2"></span>
-              <input type="number" class="conv-input" id="calc-val-u2" placeholder="0" min="0" step="0.001">
-              <div class="price-hint" id="calc-ph2"></div>
-            </div>
-          </div>
-
-          <hr class="divider">
-
-          <div class="field-indicator">
-            <div class="field-dot" id="field-dot"></div>
-            <div>
-              <span id="field-label">Click a quantity or price field in Manager.io above, then use Fill buttons</span>
-            </div>
-          </div>
-
-          <div class="fill-grid">
-            <button class="fill-btn" id="fill-u1-btn">↑ Fill as <span id="fill-lbl-u1">Unit1</span></button>
-            <button class="fill-btn" id="fill-u2-btn">↑ Fill as <span id="fill-lbl-u2">Unit2</span></button>
-          </div>
-
-          <div id="price-summary" style="display:none" class="price-summary-box">
-            <div class="ps-title">💰 Price Summary</div>
-            <div id="ps-rows"></div>
-          </div>
+        <div class="space-y-1">
+          <label id="lbl-u2" class="block text-xs font-bold text-[#1e3a5c] uppercase tracking-wide">Unit 2</label>
+          <input id="val-u2" type="number" placeholder="0" min="0" step="0.001"
+            oninput="calcConvert(2)"
+            class="w-full border rounded-lg p-3 text-xl font-bold text-center focus:outline-none focus:border-[#1e3a5c]">
+          <div id="ph-u2" class="text-xs text-gray-400 text-center h-4"></div>
         </div>
       </div>
 
-      <div id="calc-empty" class="empty-state">
-        <div class="empty-icon">⚖</div>
-        <div class="empty-title">Select an item to start</div>
-        <div class="empty-sub">Choose an inventory item from the dropdown above to begin converting between units.</div>
+      <div id="price-summary" class="hidden bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
+        <div class="text-xs font-bold text-green-800 uppercase tracking-wide mb-1">💰 Price Summary</div>
+        <div id="ps-rows" class="space-y-1"></div>
       </div>
 
-    </div>
+      <div class="bg-gray-50 rounded-lg p-3 flex items-center gap-2 text-xs text-gray-500">
+        <span id="field-dot" class="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0"></span>
+        <span id="field-label">Click a qty field in the invoice above, then use the buttons below</span>
+      </div>
 
-    <!-- ── ITEMS TAB ── -->
-    <div class="tab-pane" id="tab-items">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Inventory Items</span>
-          <button class="btn-add" id="add-custom-btn">+ Custom Item</button>
-        </div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-          <input type="text" id="search-items" placeholder="🔍 Search items…">
-          <div id="items-loading" class="loading-bar"><div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Loading inventory from Manager.io…</div>
-          <div class="items-grid" id="items-grid"></div>
-        </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="fillField(1)"
+          class="bg-[#1e3a5c] text-white rounded-lg py-2 text-xs font-bold hover:bg-[#102440] transition">
+          ↑ Fill as <span id="fill-lbl-u1">Unit1</span>
+        </button>
+        <button onclick="fillField(2)"
+          class="bg-[#1e3a5c] text-white rounded-lg py-2 text-xs font-bold hover:bg-[#102440] transition">
+          ↑ Fill as <span id="fill-lbl-u2">Unit2</span>
+        </button>
       </div>
     </div>
 
-    <!-- ── INVOICE VIEW TAB ── -->
-    <div class="tab-pane" id="tab-invoice">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Invoice Line Items</span>
-          <button class="btn-sm" id="load-invoice-btn">↻ Load</button>
-        </div>
-        <div class="card-body">
-          <div id="invoice-items-area">
-            <div class="empty-state">
-              <div class="empty-icon">🧾</div>
-              <div class="empty-title">No invoice loaded</div>
-              <div class="empty-sub">Click <strong>Load</strong> to read items from the current invoice page. Works on Sales Invoices, Purchase Invoices, and Receipts.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── HELP TAB ── -->
-    <div class="tab-pane" id="tab-help">
-      <div class="card">
-        <div class="card-header"><span class="card-title">How to Use</span></div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:12px;font-size:12.5px;line-height:1.7;color:var(--gray-700)">
-          <div>
-            <div class="section-label" style="margin-bottom:6px">Step 1 — Set up your items</div>
-            Go to the <strong>Items</strong> tab. Your Manager.io inventory items are automatically loaded. Find the item (e.g. <em>60x60 Tiles</em>) and click <strong>Set Dual Unit</strong> to configure:<br>
-            • Primary unit: <strong>Box</strong><br>
-            • Secondary unit: <strong>Metre</strong><br>
-            • Ratio: <strong>1.5</strong> (meaning 1 Box = 1.5 Metres)<br>
-            • Prices per unit (optional)
-          </div>
-          <hr class="divider">
-          <div>
-            <div class="section-label" style="margin-bottom:6px">Step 2 — Convert quantities</div>
-            Go to the <strong>Calculator</strong> tab. Select the item, then type a quantity in either unit — the other unit auto-fills instantly. Use the price summary to check totals.
-          </div>
-          <hr class="divider">
-          <div>
-            <div class="section-label" style="margin-bottom:6px">Step 3 — Fill into invoice forms</div>
-            Click any <strong>quantity or price field</strong> in the Manager.io invoice form above. The green dot will light up. Then click <strong>Fill as Box</strong> or <strong>Fill as Metre</strong> to insert the converted value directly into that field.
-          </div>
-          <hr class="divider">
-          <div>
-            <div class="section-label" style="margin-bottom:6px">Step 4 — Invoice view</div>
-            The <strong>Invoice View</strong> tab fetches the current invoice's line items and shows both unit quantities side by side for a quick overview.
-          </div>
-          <hr class="divider">
-          <div style="background:var(--amber-lt);border:1px solid #FDE68A;border-radius:var(--radius);padding:10px 12px;font-size:12px;color:#78350F">
-            <strong>⚠ Fill button note:</strong> The Fill feature works by sending a value to whichever input field you last clicked in Manager.io. Make sure you click the correct field first, then click Fill in this panel.
-          </div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">Recommended Placements</span></div>
-        <div class="card-body" style="display:flex;flex-direction:column;gap:6px;font-size:12.5px">
-          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span>Sales Invoices</span><code style="font-size:11px;background:var(--gray-100);padding:2px 7px;border-radius:4px">/sales-invoices</code></div>
-          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span>Purchase Invoices</span><code style="font-size:11px;background:var(--gray-100);padding:2px 7px;border-radius:4px">/purchase-invoices</code></div>
-          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span>Sales Receipts</span><code style="font-size:11px;background:var(--gray-100);padding:2px 7px;border-radius:4px">/cash-receipts</code></div>
-          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span>Inventory Items</span><code style="font-size:11px;background:var(--gray-100);padding:2px 7px;border-radius:4px">/inventory-items</code></div>
-          <div style="display:flex;justify-content:space-between;padding:5px 0"><span>Delivery Notes</span><code style="font-size:11px;background:var(--gray-100);padding:2px 7px;border-radius:4px">/delivery-notes</code></div>
-        </div>
-      </div>
+    <div id="calc-empty" class="text-center py-10 text-gray-400">
+      <div class="text-4xl mb-2">⚖</div>
+      <div class="font-medium text-gray-500">Select an item to start</div>
+      <div class="text-xs mt-1">Choose an inventory item from the dropdown above</div>
     </div>
 
   </div>
+
+  <!-- ── ITEMS TAB ── -->
+  <div id="view-items" class="tab-view hidden p-4 space-y-3">
+    <div class="bg-white rounded-lg border shadow-sm overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+        <span class="text-xs font-bold text-gray-600 uppercase tracking-wide">Inventory Items</span>
+        <div class="flex gap-2">
+          <input id="item-search" type="text" placeholder="Search…" oninput="renderItemsTab()"
+            class="border rounded px-2 py-1 text-xs focus:outline-none focus:border-[#1e3a5c]">
+          <button onclick="addCustomItem()"
+            class="bg-[#1e3a5c] text-white rounded px-3 py-1 text-xs font-bold hover:bg-[#102440]">+ Custom</button>
+        </div>
+      </div>
+      <div id="items-loading" class="p-4 text-center text-xs text-gray-400">Loading…</div>
+      <div id="items-list" class="divide-y hidden"></div>
+    </div>
+  </div>
+
+  <!-- ── INVOICE TAB ── -->
+  <div id="view-invoice" class="tab-view hidden p-4 space-y-3">
+    <div class="bg-white rounded-lg border shadow-sm overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+        <span class="text-xs font-bold text-gray-600 uppercase tracking-wide">Current Invoice Lines</span>
+        <button onclick="loadInvoice()"
+          class="bg-[#1e3a5c] text-white rounded px-3 py-1 text-xs font-bold hover:bg-[#102440]">↻ Load</button>
+      </div>
+      <div id="invoice-area" class="p-4 text-xs text-gray-400 text-center py-8">
+        Click Load to read the current invoice
+      </div>
+    </div>
+  </div>
+
+  <!-- ── HELP TAB ── -->
+  <div id="view-help" class="tab-view hidden p-4 space-y-3">
+    <div class="bg-white rounded-lg border shadow-sm p-4 space-y-4 text-sm text-gray-700 leading-relaxed">
+      <div><span class="font-bold text-[#1e3a5c]">1. Set up items</span><br>
+        Go to <strong>Items</strong> tab → find your item (e.g. 60x60 Tiles) → click <strong>Set Dual</strong> → enter Primary Unit (Box), Secondary Unit (Metre), Ratio (1.5 = 1 Box equals 1.5 Metres), and prices.
+      </div>
+      <hr>
+      <div><span class="font-bold text-[#1e3a5c]">2. Convert quantities</span><br>
+        Go to <strong>Calculator</strong> → select item → type in either unit. The other auto-calculates.
+      </div>
+      <hr>
+      <div><span class="font-bold text-[#1e3a5c]">3. Fill into invoice</span><br>
+        Click any quantity field in the Manager.io invoice form, then click <strong>Fill as Box</strong> or <strong>Fill as Metre</strong>. The value is copied to clipboard — paste it in.
+      </div>
+      <hr>
+      <div><span class="font-bold text-[#1e3a5c]">4. Invoice view</span><br>
+        Open <strong>Invoice</strong> tab → click Load → see all line items with dual unit quantities side by side.
+      </div>
+    </div>
+  </div>
+
 </div>
 
-<!-- Item Edit Overlay -->
-<div id="edit-overlay" class="edit-form-overlay" style="display:none">
-  <div class="edit-form">
-    <div class="ef-title">Set Dual Unit</div>
-    <div class="ef-item-name" id="ef-item-name"></div>
-    <div class="ef-row">
-      <div class="ef-group">
-        <label>Primary Unit</label>
-        <input type="text" class="ef-input" id="ef-unit1" placeholder="e.g. Box">
+<!-- ── DUAL UNIT MODAL ── -->
+<div id="modal" class="modal items-center justify-center">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+      <span class="font-bold text-sm">Set Dual Unit</span>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <div id="modal-item-name" class="text-xs font-bold text-blue-600 bg-blue-50 rounded px-2 py-1"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Primary Unit</label>
+          <input id="ef-u1" type="text" placeholder="Box"
+            class="w-full border rounded p-2 text-sm focus:outline-none focus:border-[#1e3a5c]">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Secondary Unit</label>
+          <input id="ef-u2" type="text" placeholder="Metre"
+            class="w-full border rounded p-2 text-sm focus:outline-none focus:border-[#1e3a5c]">
+        </div>
       </div>
-      <div class="ef-group">
-        <label>Secondary Unit</label>
-        <input type="text" class="ef-input" id="ef-unit2" placeholder="e.g. Metre">
+      <div>
+        <label id="ef-ratio-lbl" class="block text-xs font-bold text-gray-500 uppercase mb-1">Secondary per Primary</label>
+        <input id="ef-ratio" type="number" placeholder="e.g. 1.5" step="0.001" min="0"
+          class="w-full border rounded p-2 text-sm focus:outline-none focus:border-[#1e3a5c]"
+          oninput="updateModalHint()">
+        <div id="ef-hint" class="text-xs text-gray-500 mt-1 bg-gray-50 rounded px-2 py-1">1 Box = ? Metre</div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label id="ef-p1-lbl" class="block text-xs font-bold text-gray-500 uppercase mb-1">Price / Primary</label>
+          <input id="ef-p1" type="number" placeholder="0.00" step="0.01" min="0"
+            class="w-full border rounded p-2 text-sm focus:outline-none focus:border-[#1e3a5c]">
+        </div>
+        <div>
+          <label id="ef-p2-lbl" class="block text-xs font-bold text-gray-500 uppercase mb-1">Price / Secondary</label>
+          <input id="ef-p2" type="number" placeholder="0.00" step="0.01" min="0"
+            class="w-full border rounded p-2 text-sm focus:outline-none focus:border-[#1e3a5c]">
+        </div>
       </div>
     </div>
-    <div class="ef-group">
-      <label id="ef-ratio-lbl">Secondary units per Primary unit</label>
-      <input type="number" class="ef-input" id="ef-ratio" placeholder="e.g. 1.5" min="0" step="0.001">
-    </div>
-    <div class="ef-ratio-hint" id="ef-ratio-hint">1 <strong id="ef-rh-u1">Box</strong> = <strong id="ef-rh-ratio">?</strong> <strong id="ef-rh-u2">Metres</strong></div>
-    <div class="ef-row">
-      <div class="ef-group">
-        <label>Price / <span id="ef-price1-lbl">Primary Unit</span></label>
-        <input type="number" class="ef-input" id="ef-price1" placeholder="0.00" min="0" step="0.01">
-      </div>
-      <div class="ef-group">
-        <label>Price / <span id="ef-price2-lbl">Secondary Unit</span></label>
-        <input type="number" class="ef-input" id="ef-price2" placeholder="0.00" min="0" step="0.01">
-      </div>
-    </div>
-    <div class="ef-actions">
-      <button class="ef-save" id="ef-save">Save</button>
-      <button class="ef-cancel" id="ef-cancel">Cancel</button>
+    <div class="flex justify-end gap-2 px-4 py-3 bg-gray-50 border-t">
+      <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
+      <button onclick="saveModal()" class="px-4 py-2 bg-[#1e3a5c] text-white rounded text-sm font-bold hover:bg-[#102440]">Save</button>
     </div>
   </div>
 </div>
 
 <!-- Toast -->
-<div id="toast"></div>
+<div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg opacity-0 transition-opacity pointer-events-none z-50"></div>
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-//  Manager.io Dual Units Extension — v1.2
-//  Clean rewrite: no function reassignment hacks, robust connection
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+//  Dual Units Extension v2.0 — Manager.io Bridge API
+// ═══════════════════════════════════════════════════
 
-// ── Config / State ─────────────────────────────────────────────
-var ctx            = null;
+// ── State ──────────────────────────────────────────
 var inventoryItems = [];
-var dualConfig     = {};
-var calcSelected   = null;
-var debugLog       = [];
-var editingKey     = null;
-var ctxReceived    = false;
-var appMode        = 'demo'; // 'live' | 'manual' | 'demo'
+var configs = JSON.parse(localStorage.getItem('dualUnitConfigs_v2') || '{}');
+var editingKey = null;
+var connected = false;
 
-// ── Storage ────────────────────────────────────────────────────
-var DUAL_KEY = 'mgr_dual_config_v1';
-var CRED_KEY = 'mgr_manual_conn_v1';
+function saveConfigs() { localStorage.setItem('dualUnitConfigs_v2', JSON.stringify(configs)); }
 
-function loadConfig()  { try { dualConfig = JSON.parse(localStorage.getItem(DUAL_KEY)) || {}; } catch(e){ dualConfig={}; } }
-function saveConfig()  { try { localStorage.setItem(DUAL_KEY, JSON.stringify(dualConfig)); } catch(e){} }
-function loadCreds()   { try { return JSON.parse(localStorage.getItem(CRED_KEY)); } catch(e){ return null; } }
-function saveCreds(ep,tk){ try { localStorage.setItem(CRED_KEY, JSON.stringify({endpoint:ep,token:tk})); } catch(e){} }
-loadConfig();
+// ── Manager.io postMessage Bridge ──────────────────
+// Exact mechanism discovered from production extension:
+// SEND:    { type:'api-request', method:'GET', path:'/api4/...', requestId:'uuid' }
+// RECEIVE: { type:'api-request-response', requestId:'uuid', body: [...data...] }
+var _pending = {};
 
-// ── Manager.io postMessage Bridge ─────────────────────────────
-// The correct mechanism: send {type:'api-request'} to window.parent
-// Manager.io handles auth internally and sends back the response
-// No token, no CORS — works automatically inside Manager.io iframe
-
-var _pendingRequests = {};
-
-function managerRequest(path, callback) {
-  var requestId = 'du-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+function managerRequest(path, method, body, cb) {
+  if (typeof method === 'function') { cb = method; method = 'GET'; body = null; }
+  if (typeof body === 'function')   { cb = body; body = null; }
+  var rid = 'du-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
   var done = false;
-
-  _pendingRequests[requestId] = function(data) {
-    if (done) return;
-    done = true;
-    delete _pendingRequests[requestId];
-    callback(null, data);
+  _pending[rid] = function(data) {
+    if (done) return; done = true; delete _pending[rid]; cb(null, data);
   };
-
   setTimeout(function() {
-    if (done) return;
-    done = true;
-    delete _pendingRequests[requestId];
-    callback(new Error('timeout'));
-  }, 8000);
-
+    if (done) return; done = true; delete _pending[rid]; cb(new Error('timeout'));
+  }, 12000);
   try {
-    window.parent.postMessage({
-      type: 'api-request',
-      method: 'GET',
-      path: path,
-      requestId: requestId
-    }, '*');
-  } catch(e) {
-    callback(e);
-  }
+    var msg = { type:'api-request', method: method||'GET', path: path, requestId: rid };
+    if (body) msg.body = body;
+    window.parent.postMessage(msg, '*');
+  } catch(e) { cb(e); }
 }
 
-// Listen for responses from Manager.io
-window.addEventListener('message', function(ev) {
-  var data = ev.data;
-  if (!data || typeof data !== 'object') return;
-
-  // Handle api-request responses
-  if (data.requestId && _pendingRequests[data.requestId]) {
-    _pendingRequests[data.requestId](data);
-    return;
+// Listen for responses — type ends with '-response', data is in .body
+window.addEventListener('message', function(e) {
+  var d = e.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.requestId && _pending[d.requestId]) {
+    // Accept if type ends with '-response' OR if type is missing
+    if (!d.type || (typeof d.type === 'string' && d.type.indexOf('response') !== -1)) {
+      _pending[d.requestId](d.body !== undefined ? d.body : d);
+    }
   }
-
-  // Also handle legacy manager-context format (just in case)
-  if (ctxReceived) return;
-  var payload = null;
-  if (data.type === 'manager-context' && data.payload) payload = data.payload;
-  else if (data.apiEndpoint && data.apiAccessToken) payload = data;
-  if (payload) receiveContext(payload, 'postMessage');
 });
 
-// Auto-detect domain from referrer for fallback fetch
-try {
-  var _ref = document.referrer;
-  if (_ref) window._detectedManagerBase = _ref.match(/(https?:\/\/[^\/]+)/)[1];
-} catch(e) {}
-
-function receiveContext(payload, source) {
-  if (ctxReceived) return;
-  ctxReceived = true;
-  appMode = 'live';
-  ctx = payload;
-  launchApp();
+// Fetch all pages of a resource
+function fetchAll(endpoint, cb) {
+  var all = [];
+  function nextPage(token) {
+    var path = '/api4/' + endpoint + '?PageSize=1000' + (token ? '&next_page_token=' + encodeURIComponent(token) : '');
+    managerRequest(path, function(err, body) {
+      if (err) { cb(err); return; }
+      var page = Array.isArray(body) ? body : ((body && (body.items || body.data)) || []);
+      all = all.concat(page);
+      var next = body && (body.next_page_token || body.nextPageToken);
+      if (next) { nextPage(next); } else { cb(null, all); }
+    });
+  }
+  nextPage(null);
 }
 
-// Connect via Manager.io postMessage bridge on startup
-// Step 1: Verify bridge works using a known endpoint (sales-invoice-batch)
-// Step 2: Then fetch inventory items via bridge
-setTimeout(function() {
-  if (ctxReceived) return;
+// ── Startup ────────────────────────────────────────
+window.addEventListener('load', function() {
+  // Resize hint to Manager.io
+  try { window.parent.postMessage({ type:'resize', height:600 }, '*'); } catch(e) {}
 
-  // Known-working bridge endpoint (same as dashboard uses)
-  managerRequest('/api4/sales-invoice-batch?PageSize=1', function(err, data) {
+  // Fetch inventory — this also proves the bridge works
+  fetchAll('inventory-items', function(err, items) {
     if (err) {
-      console.log('[DualUnits] Bridge not available:', err.message);
-      return; // Bridge not working — user can use Manual Connect or Demo
-    }
-
-    // Bridge confirmed working — now we're connected
-    if (ctxReceived) return;
-    ctxReceived = true;
-    appMode = 'live';
-    ctx = { apiEndpoint: null, apiAccessToken: null, usingBridge: true,
-             currentPageUrl: 'Manager.io (bridge)', businessName: 'Manager.io' };
-    launchApp();
-
-    // Step 2: Fetch inventory items — try all known paths
-    var inventoryPaths = [
-      '/api4/inventory-item-batch?PageSize=99999',
-      '/api4/InventoryItem-batch?PageSize=99999',
-      '/api4/inventory-items?PageSize=99999',
-      '/api4/InventoryItems?PageSize=99999',
-    ];
-
-    (function tryNextPath(idx) {
-      if (idx >= inventoryPaths.length) {
-        showInventoryError(
-          'Could not load inventory items via Manager.io bridge.<br>' +
-          'Tried paths: ' + inventoryPaths.join(', ') + '<br><br>' +
-          'You can add items manually using the <strong>+ Custom Item</strong> button.'
-        );
-        return;
-      }
-      managerRequest(inventoryPaths[idx], function(err2, data2) {
-        if (err2) { tryNextPath(idx + 1); return; }
-        var items = extractItems(data2);
-        if (items.length === 0) { tryNextPath(idx + 1); return; }
-        // Success!
-        var loadEl = document.getElementById('items-loading');
-        if (loadEl) loadEl.style.display = 'none';
-        inventoryItems = items;
-        renderItemsTab();
-        populateCalcDropdown();
-        showToast('✓ ' + items.length + ' inventory items loaded from Manager.io');
-      });
-    })(0);
-  });
-}, 300);
-
-// ── Debug helpers ──────────────────────────────────────────────
-function now() { return new Date().toISOString().slice(11,19); }
-
-window.addEventListener('message', function(ev) {
-  try {
-    debugLog.push({ time: now(), origin: ev.origin||'?', data: JSON.stringify(ev.data).slice(0,200) });
-    renderDebugLog();
-  } catch(e){}
-});
-
-function renderDebugLog() {
-  var el  = document.getElementById('debug-log');
-  var cnt = document.getElementById('debug-count');
-  if (!el) return;
-  cnt.textContent = debugLog.length + ' received';
-  if (debugLog.length > 0) cnt.style.color = '#22c55e';
-  el.innerHTML = debugLog.slice(-5).map(function(m) {
-    var c = m.data.includes('✓') ? '#4ade80' : '#94A3B8';
-    return '<div style="color:'+c+';margin-bottom:3px"><span style="color:#475569">['+m.time+']</span> '+escHtml(m.data)+'</div>';
-  }).join('');
-  el.scrollTop = el.scrollHeight;
-}
-
-function showConnectError(e) {
-  var el = document.getElementById('debug-error');
-  if (el) { el.style.display='block'; el.innerHTML='<strong>Error:</strong> '+escHtml(String(e)); }
-}
-
-// ── Launch the app ─────────────────────────────────────────────
-function launchApp() {
-  var cv = document.getElementById('connecting-view');
-  var av = document.getElementById('app-view');
-  if (cv) cv.style.display = 'none';
-  if (av) av.style.display = 'block';
-
-  // Status pill
-  var dot  = document.getElementById('status-dot');
-  var text = document.getElementById('status-text');
-  if (appMode === 'live') {
-    if (dot)  { dot.className='status-dot connected'; dot.style.background=''; }
-    if (text) text.textContent = 'Connected ✓';
-  } else if (appMode === 'manual') {
-    if (dot)  { dot.className='status-dot'; dot.style.background='#F97316'; }
-    if (text) text.textContent = 'Manual credentials';
-  } else {
-    if (dot)  { dot.className='status-dot'; dot.style.background='#FCD34D'; }
-    if (text) text.textContent = 'Demo Mode';
-  }
-
-  // Context banner
-  var placement = (ctx && (ctx.currentPageUrl||ctx.placement||ctx.page||ctx.path)) || appMode;
-  var business  = (ctx && (ctx.businessName||ctx.business||ctx.name)) || '';
-  var pl = document.getElementById('ctx-page-label');
-  var bl = document.getElementById('ctx-business-label');
-  if (pl) pl.textContent = placement;
-  if (bl && business) bl.textContent = business;
-
-  // Orange banner if running standalone
-  if (appMode !== 'live') {
-    var banner = document.getElementById('ctx-banner');
-    if (banner) {
-      banner.style.cssText = 'background:#FFF7ED;border-color:#FED7AA;color:#C2410C;padding:10px 14px;border-radius:8px;border:1px solid;display:flex;align-items:flex-start;gap:10px;font-size:12px;margin-bottom:4px';
-      var msg = appMode === 'demo'
-        ? '⚠ Demo mode — add items manually in the Items tab. Inventory auto-load needs Manager.io connection.'
-        : '⚠ Manual credentials — calculator works. Inventory loads inside Manager.io\'s iframe.';
-      banner.innerHTML = '<div>'+msg+'</div>';
-    }
-  }
-
-  loadInventory();
-}
-
-// ── Startup sequence ───────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function() {
-  setupConnectUI();
-  setupTabUI();
-  setupCalcUI();
-  setupItemsUI();
-  setupInvoiceUI();
-
-  // Auto-launch after 3s ONLY if saved credentials exist
-  // Never auto-launch into demo — user must choose explicitly
-  setTimeout(function() {
-    if (ctxReceived) return;
-    var saved = loadCreds();
-    if (saved && saved.endpoint && saved.token) {
-      appMode = 'manual';
-      ctx = { apiEndpoint: saved.endpoint, apiAccessToken: saved.token,
-               currentPageUrl: 'Manual', businessName: 'Your Business' };
-      ctxReceived = true;
-      launchApp();
-    }
-    // No saved creds → stay on connecting screen, user must click Connect or Demo
-  }, 3000);
-
-  // Pre-fill saved credentials in manual connect form
-  var saved = loadCreds();
-  var epEl  = document.getElementById('mc-endpoint');
-  var tkEl  = document.getElementById('mc-token');
-  var pill  = document.getElementById('mc-saved-pill');
-  if (saved) {
-    if (epEl) epEl.value = saved.endpoint || '';
-    if (tkEl) tkEl.value = saved.token    || '';
-    if (pill) pill.style.display = 'flex';
-  } else if (window._detectedManagerBase && epEl) {
-    // Auto-suggest the detected Manager.io domain as the endpoint
-    epEl.value = window._detectedManagerBase + '/api2';
-    epEl.style.borderColor = '#22c55e';
-    epEl.title = 'Auto-detected from Manager.io page';
-  }
-});
-
-// ── Connect UI ─────────────────────────────────────────────────
-function setupConnectUI() {
-  // Tab switching on connecting screen
-  document.querySelectorAll('.conn-tab').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      document.querySelectorAll('.conn-tab').forEach(function(b){ b.classList.remove('active'); });
-      document.querySelectorAll('.conn-panel').forEach(function(p){ p.classList.remove('active'); });
-      btn.classList.add('active');
-      var panel = document.getElementById('conn-'+btn.dataset.connTab);
-      if (panel) panel.classList.add('active');
-    });
-  });
-
-  // Manual connect button
-  var mcBtn = document.getElementById('mc-connect-btn');
-  if (mcBtn) mcBtn.addEventListener('click', function() {
-    var ep  = (document.getElementById('mc-endpoint').value||'').trim().replace(/\/+$/,'');
-    var tok = (document.getElementById('mc-token').value||'').trim();
-    var err = document.getElementById('mc-error');
-    if (err) err.style.display = 'none';
-    if (!ep)  { if(err){err.textContent='Enter endpoint URL.'; err.style.display='block';} return; }
-    if (!tok) { if(err){err.textContent='Enter access token.'; err.style.display='block';} return; }
-    if (document.getElementById('mc-remember').checked) saveCreds(ep, tok);
-    appMode = 'manual';
-    ctx = { apiEndpoint: ep, apiAccessToken: tok, currentPageUrl: 'Manual', businessName: 'Your Business' };
-    ctxReceived = true;
-    launchApp();
-  });
-
-  // Clear saved credentials button
-  var clearBtn = document.getElementById('mc-clear-btn');
-  if (clearBtn) clearBtn.addEventListener('click', function() {
-    localStorage.removeItem('mgr_manual_conn_v1');
-    localStorage.removeItem('mgr_dual_config_v1');
-    localStorage.removeItem('dualUnitsItems');
-    var epEl = document.getElementById('mc-endpoint');
-    var tkEl = document.getElementById('mc-token');
-    var pill = document.getElementById('mc-saved-pill');
-    if (epEl) epEl.value = '';
-    if (tkEl) tkEl.value = '';
-    if (pill) pill.style.display = 'none';
-    var err = document.getElementById('mc-error');
-    if (err) { err.style.color='#16a34a'; err.textContent='✓ All saved credentials cleared. Enter fresh details below.'; err.style.display='block'; err.style.background='#f0fdf4'; err.style.borderColor='#bbf7d0'; }
-  });
-
-  // Demo button
-  var demoBtn = document.getElementById('demo-connect-btn');
-  if (demoBtn) demoBtn.addEventListener('click', function() {
-    appMode = 'demo';
-    ctx = { apiEndpoint: null, apiAccessToken: null, currentPageUrl: 'Demo', businessName: 'Demo' };
-    ctxReceived = true;
-    launchApp();
-  });
-}
-
-// ── App tab switching ──────────────────────────────────────────
-function setupTabUI() {
-  document.querySelectorAll('.tab-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
-      document.querySelectorAll('.tab-pane').forEach(function(p){ p.classList.remove('active'); });
-      btn.classList.add('active');
-      var pane = document.getElementById('tab-'+btn.dataset.tab);
-      if (pane) pane.classList.add('active');
-    });
-  });
-}
-
-// ── Load inventory ─────────────────────────────────────────────
-function loadInventory() {
-  var loadEl = document.getElementById('items-loading');
-
-  // Only show demo items if explicitly in demo mode AND not using the Manager.io bridge
-  if (appMode === 'demo' && !ctx.usingBridge) {
-    inventoryItems = [
-      { key:'tile_6060', name:'60x60 Tiles',     code:'T-6060', buyPrice:45, sellPrice:50 },
-      { key:'tile_3060', name:'30x60 Tiles',     code:'T-3060', buyPrice:30, sellPrice:35 },
-      { key:'cement',    name:'Cement Bag 50kg', code:'C-001',  buyPrice:8,  sellPrice:10 },
-      { key:'paint_5l',  name:'Paint (5L Tin)',  code:'P-5L',   buyPrice:22, sellPrice:28 },
-      { key:'marble',    name:'Marble Slab',     code:'M-001',  buyPrice:90, sellPrice:110 },
-    ];
-    if (loadEl) loadEl.style.display = 'none';
-    renderItemsTab();
-    populateCalcDropdown();
-    return;
-  }
-
-  // Use Manager.io postMessage bridge (primary) or direct fetch (fallback)
-  if (loadEl) {
-    loadEl.style.display = 'flex';
-    loadEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div> <span>Loading from Manager.io…</span>';
-  }
-
-  // PRIMARY: Use the postMessage bridge (works automatically, no token needed)
-  if (ctx.usingBridge || (!ctx.apiEndpoint && !ctx.apiAccessToken)) {
-
-    // Use items already fetched during the startup ping if available
-    if (window._bridgeItems && window._bridgeItems.length > 0) {
-      if (loadEl) loadEl.style.display = 'none';
-      inventoryItems = window._bridgeItems;
-      renderItemsTab();
-      populateCalcDropdown();
-      showToast('✓ ' + inventoryItems.length + ' items loaded from Manager.io');
+      setStatus(false, 'Not connected (' + err.message + ')');
+      // Demo mode
+      inventoryItems = [
+        { key:'demo1', name:'60x60 Tiles',    code:'T-6060', sellPrice:50 },
+        { key:'demo2', name:'30x60 Tiles',    code:'T-3060', sellPrice:35 },
+        { key:'demo3', name:'Cement Bag',     code:'C-001',  sellPrice:10 },
+      ];
+      renderAll();
       return;
     }
-
-    // Otherwise fetch now
-    managerRequest('/api4/inventory-item-batch?PageSize=99999', function(err, data) {
-      if (err) { loadInventoryDirect(); return; }
-      var items = extractItems(data);
-      if (loadEl) loadEl.style.display = 'none';
-      if (items.length > 0) {
-        inventoryItems = items;
-        renderItemsTab();
-        populateCalcDropdown();
-        showToast('✓ ' + items.length + ' items loaded from Manager.io');
-      } else {
-        showInventoryError('Connected to Manager.io but no inventory items found. Check that you have inventory items set up in Manager.io → Inventory Items.');
-      }
-    });
-    return;
-  }
-
-  // FALLBACK: Direct fetch with saved credentials
-  loadInventoryDirect();
-}
-
-function extractItems(data) {
-  // Extract items from Manager.io bridge response
-  var raw = [];
-  if (Array.isArray(data)) raw = data;
-  else if (data && Array.isArray(data.data)) raw = data.data;
-  else if (data && Array.isArray(data.items)) raw = data.items;
-  else if (data && data.response && Array.isArray(data.response)) raw = data.response;
-  else if (data && data.body) {
-    try { var b = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-      raw = Array.isArray(b) ? b : (b.data || b.items || []); } catch(e) {}
-  }
-  return raw.map(function(it) {
-    return {
-      key:       it.key||it.Key||it.id||it.Id||String(Math.random()),
-      name:      it.name||it.Name||it.itemName||it.ItemName||it.description||'',
-      code:      it.code||it.Code||it.itemCode||'',
-      buyPrice:  parseFloat(it.purchasePrice||it.PurchasePrice||it.buyPrice||0)||0,
-      sellPrice: parseFloat(it.salesPrice||it.SalesPrice||it.salePrice||it.sellPrice||0)||0,
-    };
-  }).filter(function(it){ return it.name; });
-}
-
-function loadInventoryDirect() {
-  var loadEl = document.getElementById('items-loading');
-  var base  = (ctx.apiEndpoint||'').replace(/\/+$/,'');
-  var token = ctx.apiAccessToken||'';
-  if (!base || !token) {
-    if (loadEl) loadEl.style.display = 'none';
-    showInventoryError('No credentials. Use Manual Connect tab to enter your Manager.io endpoint and access token.');
-    return;
-  }
-  var headers = {'Authorization':'Bearer '+token};
-  var urls = [base+'/inventory-item-batch', base+'/InventoryItem-batch', base+'/inventory-items'];
-  tryFetchEndpoints(urls, headers).then(function(items) {
-    if (loadEl) loadEl.style.display = 'none';
-    if (items && items.length > 0) {
-      inventoryItems = items; renderItemsTab(); populateCalcDropdown();
-      showToast('✓ '+items.length+' items loaded');
-    } else {
-      showInventoryError('No items returned from API. Check your endpoint URL: <code>'+base+'</code>');
-    }
-  }).catch(function(err) {
-    if (loadEl) loadEl.style.display = 'none';
-    showInventoryError('API error: '+String(err)+'<br>Check your endpoint and token in Manual Connect tab.');
+    connected = true;
+    setStatus(true, 'Connected ✓');
+    inventoryItems = items.map(function(it) {
+      return {
+        key:       it.Key  || it.key  || it.Id  || String(Math.random()),
+        name:      it.Name || it.name || '',
+        code:      it.Code || it.code || '',
+        buyPrice:  parseFloat(it.PurchasePrice || it.purchasePrice || 0) || 0,
+        sellPrice: parseFloat(it.SalesPrice    || it.salesPrice    || it.SalePrice || 0) || 0,
+      };
+    }).filter(function(it) { return it.name; });
+    renderAll();
+    showToast('✓ ' + inventoryItems.length + ' items loaded from Manager.io');
   });
+});
+
+function setStatus(ok, text) {
+  var dot  = document.getElementById('status-dot');
+  var span = document.getElementById('status-text');
+  dot.className = 'w-2 h-2 rounded-full ' + (ok ? 'bg-green-400' : 'bg-red-400');
+  span.textContent = text;
 }
 
-function tryFetchEndpoints(urls, headers) {
-  var idx = 0;
-  function next() {
-    if (idx >= urls.length) return Promise.reject(new Error('All endpoints failed'));
-    var url = urls[idx++];
-    return fetch(url, { headers: headers }).then(function(r) {
-      if (!r.ok) return next();
-      return r.json().then(function(d) {
-        var items = Array.isArray(d) ? d : (d.data || d.items || []);
-        if (items.length === 0) return next();
-        return items.map(function(it) {
-          return {
-            key:       it.key||it.Key||it.id||it.Id||String(Math.random()),
-            name:      it.name||it.Name||it.itemName||it.ItemName||it.description||'',
-            code:      it.code||it.Code||it.itemCode||'',
-            buyPrice:  parseFloat(it.purchasePrice||it.PurchasePrice||it.buyPrice||0)||0,
-            sellPrice: parseFloat(it.salesPrice||it.SalesPrice||it.salePrice||it.sellPrice||0)||0,
-          };
-        }).filter(function(it){ return it.name; });
-      });
-    }).catch(function() { return next(); });
-  }
-  return next();
+function renderAll() {
+  renderItemsTab();
+  populateCalcDropdown();
+  document.getElementById('items-loading').classList.add('hidden');
+  document.getElementById('items-list').classList.remove('hidden');
 }
 
-function showInventoryError(msg) {
-  var el = document.getElementById('items-loading');
-  if (!el) return;
-  el.style.display = 'block';
-  el.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px;line-height:1.7;width:100%">'+msg+'</div>';
-}
-
-// ── Calculator ─────────────────────────────────────────────────
-function setupCalcUI() {
-  var selItem = document.getElementById('calc-item-select');
-  var v1      = document.getElementById('calc-val-u1');
-  var v2      = document.getElementById('calc-val-u2');
-  var fb1     = document.getElementById('fill-u1-btn');
-  var fb2     = document.getElementById('fill-u2-btn');
-
-  if (selItem) selItem.addEventListener('change', function() {
-    calcSelected = getAllItems().find(function(i){ return i.key === selItem.value; }) || null;
-    updateCalcUI();
+// ── Tab switching ───────────────────────────────────
+function showTab(id) {
+  document.querySelectorAll('.tab-view').forEach(function(v) { v.classList.add('hidden'); });
+  document.getElementById('view-' + id).classList.remove('hidden');
+  document.querySelectorAll('[id^="tab-"]').forEach(function(b) {
+    b.classList.remove('tab-active','text-[#1e3a5c]');
+    b.classList.add('text-gray-500');
   });
-  if (v1) v1.addEventListener('input', function() {
-    var cfg = calcSelected && dualConfig[calcSelected.key];
-    if (!cfg) return;
-    var val = parseFloat(v1.value);
-    if (!isNaN(val) && v2) v2.value = rd(val * cfg.ratio);
-    updatePriceSummary();
-  });
-  if (v2) v2.addEventListener('input', function() {
-    var cfg = calcSelected && dualConfig[calcSelected.key];
-    if (!cfg) return;
-    var val = parseFloat(v2.value);
-    if (!isNaN(val) && v1) v1.value = rd(val / cfg.ratio);
-    updatePriceSummary();
-  });
-  if (fb1) fb1.addEventListener('click', function() { fillUnit(1); });
-  if (fb2) fb2.addEventListener('click', function() { fillUnit(2); });
+  var tb = document.getElementById('tab-' + id);
+  tb.classList.add('tab-active'); tb.classList.remove('text-gray-500');
 }
 
-function populateCalcDropdown() {
-  var sel   = document.getElementById('calc-item-select');
-  var cnt   = document.getElementById('calc-items-count');
-  if (!sel) return;
-  var all   = getAllItems();
-  if (cnt) { cnt.textContent = all.length + ' items'; cnt.className = 'tag tag-blue'; }
-  sel.innerHTML = '<option value="">— Select an inventory item —</option>' +
-    all.map(function(it) {
-      var hasDual = !!dualConfig[it.key];
-      return '<option value="'+escHtml(it.key)+'">'+(hasDual?'⚖ ':'')+escHtml(it.name)+(it.code?' ('+escHtml(it.code)+')':'')+'</option>';
-    }).join('');
-  if (calcSelected) sel.value = calcSelected.key;
-}
-
-function getAllItems() {
-  var custom = Object.keys(dualConfig)
-    .filter(function(k){ return k.indexOf('custom_')===0; })
-    .map(function(k){ return { key:k, name:dualConfig[k].name||k, code:'', buyPrice:0, sellPrice:0 }; });
-  return inventoryItems.concat(custom);
-}
-
-function updateCalcUI() {
-  var body   = document.getElementById('calc-body');
-  var empty  = document.getElementById('calc-empty');
-  var noDual = document.getElementById('calc-no-dual');
-  if (!calcSelected) {
-    if(body) body.style.display='none';
-    if(empty) empty.style.display='block';
-    if(noDual) noDual.style.display='none';
-    return;
-  }
-  var cfg = dualConfig[calcSelected.key];
-  if (!cfg) {
-    if(body) body.style.display='none';
-    if(empty) empty.style.display='none';
-    if(noDual) noDual.style.display='block';
-    return;
-  }
-  if(body) body.style.display='block';
-  if(empty) empty.style.display='none';
-  if(noDual) noDual.style.display='none';
-
-  setText('ratio-badge',   '1 '+cfg.unit1+' = '+cfg.ratio+' '+cfg.unit2);
-  setText('calc-lbl-u1',   cfg.unit1);
-  setText('calc-lbl-u2',   cfg.unit2);
-  setText('calc-badge-u1', cfg.unit1);
-  setText('calc-badge-u2', cfg.unit2);
-  setText('fill-lbl-u1',   cfg.unit1);
-  setText('fill-lbl-u2',   cfg.unit2);
-
-  var p1 = cfg.price1 || (calcSelected && calcSelected.sellPrice) || 0;
-  var p2 = cfg.price2 || 0;
-  setText('calc-ph1', p1 ? '@ '+fmt(p1)+' / '+cfg.unit1 : '');
-  setText('calc-ph2', p2 ? '@ '+fmt(p2)+' / '+cfg.unit2 : '');
-
-  var v1 = document.getElementById('calc-val-u1');
-  var v2 = document.getElementById('calc-val-u2');
-  if(v1) v1.value = '';
-  if(v2) v2.value = '';
-  updatePriceSummary();
-}
-
-function updatePriceSummary() {
-  var box  = document.getElementById('price-summary');
-  var rows = document.getElementById('ps-rows');
-  var cfg  = calcSelected && dualConfig[calcSelected.key];
-  if (!box || !cfg) { if(box) box.style.display='none'; return; }
-  var v1 = parseFloat((document.getElementById('calc-val-u1')||{}).value);
-  var v2 = parseFloat((document.getElementById('calc-val-u2')||{}).value);
-  if (isNaN(v1) && isNaN(v2)) { box.style.display='none'; return; }
-  var q1 = isNaN(v1) ? rd((v2||0)/cfg.ratio) : v1;
-  var q2 = isNaN(v2) ? rd((v1||0)*cfg.ratio)  : v2;
-  var p1 = parseFloat(cfg.price1)||(calcSelected&&calcSelected.sellPrice)||0;
-  var p2 = parseFloat(cfg.price2)||0;
-  var html = '';
-  if (p1) html += '<div class="ps-row"><span>'+q1+' '+escHtml(cfg.unit1)+' × '+fmt(p1)+'</span><span class="ps-val">'+fmt(q1*p1)+'</span></div>';
-  if (p2) html += '<div class="ps-row"><span>'+q2+' '+escHtml(cfg.unit2)+' × '+fmt(p2)+'</span><span class="ps-val">'+fmt(q2*p2)+'</span></div>';
-  if (html) { if(rows) rows.innerHTML=html; box.style.display='flex'; }
-  else box.style.display='none';
-}
-
-function fillUnit(unit) {
-  var cfg = calcSelected && dualConfig[calcSelected.key];
-  if (!cfg) { showToast('Select an item first.'); return; }
-  var el  = document.getElementById(unit===1 ? 'calc-val-u1' : 'calc-val-u2');
-  var val = el && el.value;
-  if (!val) { showToast('Enter a quantity first.'); return; }
-  try {
-    window.parent.postMessage({ type:'manager-dual-fill', value:val }, '*');
-  } catch(e) {}
-  navigator.clipboard.writeText(val).then(function() {
-    showToast('✓ '+val+' '+(unit===1?cfg.unit1:cfg.unit2)+' copied — paste into qty field');
-  }).catch(function() {
-    showToast('Value: '+val+' — paste into the qty field');
-  });
-}
-
-// ── Items tab ──────────────────────────────────────────────────
-function setupItemsUI() {
-  var search = document.getElementById('search-items');
-  if (search) search.addEventListener('input', renderItemsTab);
-
-  var addBtn = document.getElementById('add-custom-btn');
-  if (addBtn) addBtn.addEventListener('click', function() {
-    var name = prompt('Enter item name:');
-    if (!name || !name.trim()) return;
-    var key = 'custom_'+Date.now();
-    dualConfig[key] = { name:name.trim(), unit1:'Box', unit2:'Metre', ratio:1, price1:0, price2:0 };
-    saveConfig();
-    renderItemsTab();
-    populateCalcDropdown();
-    openEditForm(key, name.trim());
-  });
-
-  var saveBtn   = document.getElementById('ef-save');
-  var cancelBtn = document.getElementById('ef-cancel');
-  if (saveBtn)   saveBtn.addEventListener('click',   saveItemForm);
-  if (cancelBtn) cancelBtn.addEventListener('click', function() {
-    document.getElementById('edit-overlay').style.display = 'none';
-  });
-
-  ['ef-unit1','ef-unit2','ef-ratio'].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (el) el.addEventListener('input', updateEfHint);
-  });
-}
-
+// ── Items tab ───────────────────────────────────────
 function renderItemsTab() {
-  var q    = ((document.getElementById('search-items')||{}).value||'').toLowerCase();
-  var all  = getAllItems();
-  var list = q ? all.filter(function(i){ return (i.name+' '+(i.code||'')).toLowerCase().includes(q); }) : all;
-  var grid = document.getElementById('items-grid');
-  if (!grid) return;
+  var q    = (document.getElementById('item-search').value || '').toLowerCase();
+  var list = document.getElementById('items-list');
+  var items = inventoryItems.filter(function(it) {
+    return !q || it.name.toLowerCase().includes(q) || (it.code||'').toLowerCase().includes(q);
+  });
 
-  if (list.length === 0) {
-    grid.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No items found</div><div class="empty-sub">Try a different search or add a custom item.</div></div>';
+  if (!items.length) {
+    list.innerHTML = '<div class="p-6 text-center text-gray-400 text-xs">No items found</div>';
     return;
   }
-  grid.innerHTML = list.map(function(item) {
-    var cfg    = dualConfig[item.key];
-    var hasDual = !!cfg;
-    var sub    = hasDual
-      ? '1 '+escHtml(cfg.unit1)+' = '+cfg.ratio+' '+escHtml(cfg.unit2)+(cfg.price1?' · '+fmt(cfg.price1)+'/'+escHtml(cfg.unit1):'')+(cfg.price2?' · '+fmt(cfg.price2)+'/'+escHtml(cfg.unit2):'')
-      : (item.code ? 'Code: '+escHtml(item.code) : 'No dual unit set');
-    return '<div class="item-row '+(hasDual?'has-dual':'')+'">' +
-      '<div class="item-info"><div class="item-name">'+escHtml(item.name)+'</div><div class="item-sub">'+sub+'</div></div>' +
-      '<div class="item-actions">' +
-        (hasDual?'<button class="btn-sm danger" onclick="removeItemConfig(\''+escHtml(item.key)+'\')">✕</button>':'') +
-        '<button class="btn-sm primary" onclick="openEditForm(\''+escHtml(item.key)+'\',\''+escHtml(item.name)+'\')">'+(hasDual?'✏ Edit':'⚖ Set Dual')+'</button>' +
-        (hasDual?'<button class="btn-sm" onclick="useItem(\''+escHtml(item.key)+'\')">▶ Use</button>':'') +
+
+  list.innerHTML = items.map(function(it) {
+    var cfg = configs[it.key];
+    var badge = cfg
+      ? '<span class="text-green-700 text-xs font-bold bg-green-100 rounded px-1.5 py-0.5">✓ '+esc(cfg.unit1)+'/'+esc(cfg.unit2)+'</span>'
+      : '<span class="text-gray-400 text-xs">Not set</span>';
+    var sub = it.code ? '<div class="text-xs text-gray-400">'+esc(it.code)+'</div>' : '';
+    return '<div class="flex items-center justify-between px-4 py-3 hover:bg-gray-50">' +
+      '<div><div class="font-medium text-sm">'+esc(it.name)+'</div>'+sub+'</div>' +
+      '<div class="flex items-center gap-2">' + badge +
+      '<button onclick="openModal(\''+esc(it.key)+'\')" class="text-[#1e3a5c] text-xs font-bold hover:underline px-2 py-1 rounded hover:bg-blue-50">' +
+      (cfg ? '✏ Edit' : '⚖ Set') + '</button>' +
+      (cfg ? '<button onclick="useItem(\''+esc(it.key)+'\')" class="text-gray-500 text-xs hover:text-[#1e3a5c] px-2 py-1 rounded hover:bg-gray-100">▶ Use</button>' : '') +
       '</div></div>';
   }).join('');
 }
 
-function removeItemConfig(key) {
-  if (!confirm('Remove dual unit for this item?')) return;
-  delete dualConfig[key];
-  saveConfig();
+function addCustomItem() {
+  var name = prompt('Enter item name:');
+  if (!name || !name.trim()) return;
+  var key = 'custom_' + Date.now();
+  inventoryItems.push({ key: key, name: name.trim(), code: '', buyPrice: 0, sellPrice: 0 });
   renderItemsTab();
   populateCalcDropdown();
-  if (calcSelected && calcSelected.key === key) { calcSelected=null; updateCalcUI(); }
-  showToast('Removed.');
+  openModal(key);
 }
 
 function useItem(key) {
-  var sel = document.getElementById('calc-item-select');
-  if (sel) { sel.value = key; sel.dispatchEvent(new Event('change')); }
-  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
-  document.querySelectorAll('.tab-pane').forEach(function(p){ p.classList.remove('active'); });
-  var tb = document.querySelector('[data-tab="calculator"]');
-  var tp = document.getElementById('tab-calculator');
-  if (tb) tb.classList.add('active');
-  if (tp) tp.classList.add('active');
-  showToast('Item loaded in Calculator.');
+  showTab('calculator');
+  var sel = document.getElementById('calc-select');
+  sel.value = key;
+  onCalcItemSelect();
 }
 
-// ── Item edit form ─────────────────────────────────────────────
-function openEditForm(key, name) {
+// ── Modal ───────────────────────────────────────────
+function openModal(key) {
   editingKey = key;
-  var cfg = dualConfig[key] || {};
-  setVal('ef-unit1',  cfg.unit1  || 'Box');
-  setVal('ef-unit2',  cfg.unit2  || 'Metre');
-  setVal('ef-ratio',  cfg.ratio  || '');
-  setVal('ef-price1', cfg.price1 || '');
-  setVal('ef-price2', cfg.price2 || '');
-  setText('ef-item-name', name);
-  updateEfHint();
-  var ov = document.getElementById('edit-overlay');
-  if (ov) ov.style.display = 'flex';
+  var it  = inventoryItems.find(function(i){ return i.key===key; }) || {};
+  var cfg = configs[key] || { unit1:'Box', unit2:'Metre', ratio:'', price1:'', price2:'' };
+  document.getElementById('modal-item-name').textContent = it.name || key;
+  document.getElementById('ef-u1').value    = cfg.unit1;
+  document.getElementById('ef-u2').value    = cfg.unit2;
+  document.getElementById('ef-ratio').value = cfg.ratio || '';
+  document.getElementById('ef-p1').value    = cfg.price1 || '';
+  document.getElementById('ef-p2').value    = cfg.price2 || '';
+  updateModalHint();
+  document.getElementById('modal').style.display = 'flex';
 }
 
-function updateEfHint() {
-  var u1 = (document.getElementById('ef-unit1')||{}).value || 'Unit1';
-  var u2 = (document.getElementById('ef-unit2')||{}).value || 'Unit2';
-  var r  = (document.getElementById('ef-ratio') ||{}).value || '?';
-  setText('ef-rh-u1',    u1);
-  setText('ef-rh-ratio', r);
-  setText('ef-rh-u2',    u2);
-  setText('ef-ratio-lbl',    u2+' per '+u1);
-  setText('ef-price1-lbl',   u1);
-  setText('ef-price2-lbl',   u2);
+function updateModalHint() {
+  var u1 = document.getElementById('ef-u1').value || 'Unit1';
+  var u2 = document.getElementById('ef-u2').value || 'Unit2';
+  var r  = document.getElementById('ef-ratio').value || '?';
+  document.getElementById('ef-hint').textContent = '1 '+u1+' = '+r+' '+u2;
+  document.getElementById('ef-ratio-lbl').textContent = u2+' per '+u1;
+  document.getElementById('ef-p1-lbl').textContent = 'Price / '+u1;
+  document.getElementById('ef-p2-lbl').textContent = 'Price / '+u2;
 }
 
-function saveItemForm() {
-  var u1 = ((document.getElementById('ef-unit1')||{}).value||'').trim();
-  var u2 = ((document.getElementById('ef-unit2')||{}).value||'').trim();
-  var r  = parseFloat((document.getElementById('ef-ratio')||{}).value);
-  var p1 = parseFloat((document.getElementById('ef-price1')||{}).value)||0;
-  var p2 = parseFloat((document.getElementById('ef-price2')||{}).value)||0;
-  if (!u1||!u2||isNaN(r)||r<=0) { showToast('Fill in all fields with a valid ratio > 0.'); return; }
-  var existing = dualConfig[editingKey] || {};
-  dualConfig[editingKey] = Object.assign({}, existing, { unit1:u1, unit2:u2, ratio:r, price1:p1, price2:p2 });
-  saveConfig();
-  var ov = document.getElementById('edit-overlay');
-  if (ov) ov.style.display = 'none';
+['ef-u1','ef-u2'].forEach(function(id) {
+  document.getElementById(id).addEventListener('input', updateModalHint);
+});
+
+function closeModal() { document.getElementById('modal').style.display = 'none'; }
+
+function saveModal() {
+  var u1 = document.getElementById('ef-u1').value.trim();
+  var u2 = document.getElementById('ef-u2').value.trim();
+  var r  = parseFloat(document.getElementById('ef-ratio').value);
+  if (!u1 || !u2 || isNaN(r) || r <= 0) { showToast('Fill in all fields with a valid ratio'); return; }
+  configs[editingKey] = {
+    unit1: u1, unit2: u2, ratio: r,
+    price1: parseFloat(document.getElementById('ef-p1').value) || 0,
+    price2: parseFloat(document.getElementById('ef-p2').value) || 0,
+  };
+  saveConfigs();
+  closeModal();
   renderItemsTab();
   populateCalcDropdown();
-  if (calcSelected && calcSelected.key === editingKey) updateCalcUI();
+  if (document.getElementById('calc-select').value === editingKey) onCalcItemSelect();
   showToast('Saved ✓');
 }
 
-// ── Invoice view ───────────────────────────────────────────────
-function setupInvoiceUI() {
-  var btn = document.getElementById('load-invoice-btn');
-  if (btn) btn.addEventListener('click', loadInvoiceItems);
+// ── Calculator ──────────────────────────────────────
+function populateCalcDropdown() {
+  var sel = document.getElementById('calc-select');
+  var cur = sel.value;
+  sel.innerHTML = '<option value="">— Select an inventory item —</option>';
+  inventoryItems.forEach(function(it) {
+    var hasCfg = !!configs[it.key];
+    var opt = document.createElement('option');
+    opt.value = it.key;
+    opt.textContent = (hasCfg ? '⚖ ' : '') + it.name + (it.code ? ' ('+it.code+')' : '');
+    sel.appendChild(opt);
+  });
+  if (cur) sel.value = cur;
 }
 
-function loadInvoiceItems() {
-  if (!ctx || !ctx.apiAccessToken) { showToast('Not connected.'); return; }
-  var area = document.getElementById('invoice-items-area');
-  if (area) area.innerHTML = '<div class="loading-bar"><div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Loading…</div>';
-  var base    = (ctx.apiEndpoint||'').replace(/\/+$/,'');
-  var headers = { 'Authorization':'Bearer '+ctx.apiAccessToken };
-  fetch(base+'/sales-invoice-batch', { headers:headers })
-    .then(function(r){ return r.ok ? r.json() : Promise.reject('HTTP '+r.status); })
-    .then(function(d) {
-      var invoices = Array.isArray(d) ? d : (d.data||d.items||[]);
-      if (!invoices.length) { if(area) area.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No invoices</div></div>'; return; }
-      var first = invoices[0];
-      var lines = first.lines||first.lineItems||first.LineItems||first.items||[];
-      renderInvoiceLines(area, lines, first.reference||first.number||'Latest Invoice');
-    })
-    .catch(function(e) {
-      if(area) area.innerHTML='<div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Could not load</div><div class="empty-sub">'+escHtml(String(e))+'</div></div>';
+function onCalcItemSelect() {
+  var key = document.getElementById('calc-select').value;
+  var body  = document.getElementById('calc-body');
+  var empty = document.getElementById('calc-empty');
+  var hint  = document.getElementById('no-dual-hint');
+  if (!key) { body.classList.add('hidden'); empty.classList.remove('hidden'); hint.classList.add('hidden'); return; }
+  var cfg = configs[key];
+  if (!cfg) { body.classList.add('hidden'); empty.classList.add('hidden'); hint.classList.remove('hidden'); return; }
+  body.classList.remove('hidden'); empty.classList.add('hidden'); hint.classList.add('hidden');
+  document.getElementById('ratio-pill').textContent = '1 '+cfg.unit1+' = '+cfg.ratio+' '+cfg.unit2;
+  setText('lbl-u1', cfg.unit1); setText('lbl-u2', cfg.unit2);
+  setText('fill-lbl-u1', cfg.unit1); setText('fill-lbl-u2', cfg.unit2);
+  document.getElementById('ph-u1').textContent = cfg.price1 ? '@ '+fmt(cfg.price1)+' / '+cfg.unit1 : '';
+  document.getElementById('ph-u2').textContent = cfg.price2 ? '@ '+fmt(cfg.price2)+' / '+cfg.unit2 : '';
+  document.getElementById('val-u1').value = '';
+  document.getElementById('val-u2').value = '';
+  document.getElementById('price-summary').classList.add('hidden');
+}
+
+function calcConvert(from) {
+  var key = document.getElementById('calc-select').value;
+  var cfg = key && configs[key];
+  if (!cfg) return;
+  var v1 = document.getElementById('val-u1');
+  var v2 = document.getElementById('val-u2');
+  if (from === 1) {
+    var v = parseFloat(v1.value);
+    v2.value = isNaN(v) ? '' : rd(v * cfg.ratio);
+  } else {
+    var v = parseFloat(v2.value);
+    v1.value = isNaN(v) ? '' : rd(v / cfg.ratio);
+  }
+  updatePriceSummary(cfg);
+}
+
+function updatePriceSummary(cfg) {
+  var box  = document.getElementById('price-summary');
+  var rows = document.getElementById('ps-rows');
+  var q1   = parseFloat(document.getElementById('val-u1').value);
+  var q2   = parseFloat(document.getElementById('val-u2').value);
+  if (isNaN(q1) && isNaN(q2)) { box.classList.add('hidden'); return; }
+  var qty1 = isNaN(q1) ? rd((q2||0)/cfg.ratio) : q1;
+  var qty2 = isNaN(q2) ? rd((q1||0)*cfg.ratio)  : q2;
+  var lines = [];
+  if (cfg.price1) lines.push('<div class="flex justify-between text-xs text-green-800"><span>'+qty1+' '+esc(cfg.unit1)+' × '+fmt(cfg.price1)+'</span><span class="font-bold">'+fmt(qty1*cfg.price1)+'</span></div>');
+  if (cfg.price2) lines.push('<div class="flex justify-between text-xs text-green-800"><span>'+qty2+' '+esc(cfg.unit2)+' × '+fmt(cfg.price2)+'</span><span class="font-bold">'+fmt(qty2*cfg.price2)+'</span></div>');
+  if (lines.length) { rows.innerHTML = lines.join(''); box.classList.remove('hidden'); }
+  else box.classList.add('hidden');
+}
+
+function fillField(unit) {
+  var key = document.getElementById('calc-select').value;
+  var cfg = key && configs[key];
+  if (!cfg) { showToast('Select an item first'); return; }
+  var el  = document.getElementById(unit===1 ? 'val-u1' : 'val-u2');
+  var val = el.value;
+  if (!val) { showToast('Enter a quantity first'); return; }
+  try { window.parent.postMessage({ type:'fill-field', value: val }, '*'); } catch(e) {}
+  navigator.clipboard.writeText(val).then(function() {
+    showToast('✓ ' + val + ' ' + (unit===1?cfg.unit1:cfg.unit2) + ' copied — paste into the qty field');
+  }).catch(function() {
+    showToast('Value: ' + val + ' — paste into the qty field');
+  });
+}
+
+// ── Invoice tab ─────────────────────────────────────
+function loadInvoice() {
+  var area = document.getElementById('invoice-area');
+  area.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">Loading…</div>';
+  managerRequest('/api4/page-context', function(err, page) {
+    if (err || !page) {
+      // Try sales-invoice-batch as fallback
+      managerRequest('/api4/sales-invoice-batch?PageSize=5', function(err2, data) {
+        if (err2) { area.innerHTML = '<div class="text-xs text-red-500 p-4">Could not load invoice. Navigate to a Sales Invoice in Manager.io first.</div>'; return; }
+        var invoices = Array.isArray(data) ? data : (data && (data.items||data.data)||[]);
+        if (!invoices.length) { area.innerHTML = '<div class="text-xs text-gray-400 p-4 text-center">No invoices found.</div>'; return; }
+        renderInvoiceLines(area, invoices[0].Lines || invoices[0].lines || [], invoices[0].Reference || invoices[0].Number || 'Latest Invoice');
+      });
+      return;
+    }
+    var key = page.key || (page.query && page.query.key);
+    if (!key) { area.innerHTML = '<div class="text-xs text-amber-700 p-4">Open a specific Sales Invoice in Manager.io, then click Load.</div>'; return; }
+    managerRequest('/api4/sales-invoices/'+key, function(err2, inv) {
+      if (err2) { area.innerHTML = '<div class="text-xs text-red-500 p-4">Error: '+err2.message+'</div>'; return; }
+      renderInvoiceLines(area, inv.Lines||inv.lines||[], inv.Reference||inv.Number||'Invoice');
     });
+  });
 }
 
 function renderInvoiceLines(area, lines, title) {
-  if (!area) return;
-  if (!lines||!lines.length) { area.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No line items</div></div>'; return; }
+  if (!lines.length) { area.innerHTML = '<div class="text-xs text-gray-400 p-4 text-center">No line items in this invoice.</div>'; return; }
   var rows = lines.map(function(line) {
-    var name  = line.description||line.name||line.item||'Item';
-    var qty   = parseFloat(line.quantity||line.qty||0);
-    var price = parseFloat(line.unitPrice||line.price||line.rate||0);
-    var match = getAllItems().find(function(it){ return it.name.toLowerCase()===name.toLowerCase()||(name.toLowerCase().includes(it.name.toLowerCase())); });
-    var cfg   = match ? dualConfig[match.key] : null;
-    if (!cfg) return '<div class="inv-item-row"><div class="inv-item-top"><div class="inv-item-name">'+escHtml(name)+'</div><span class="inv-no-dual">No dual unit</span></div><div style="font-size:11.5px;color:var(--gray-500);margin-top:4px">Qty: '+qty+(price?' · Price: '+fmt(price):'')+'</div></div>';
-    var u2qty = rd(qty * cfg.ratio);
-    var p1=cfg.price1||price||0, p2=cfg.price2||0;
-    return '<div class="inv-item-row has-dual" style="border-left:3px solid var(--navy)"><div class="inv-item-top"><div class="inv-item-name">'+escHtml(name)+'</div><span class="tag tag-blue">⚖ Dual</span></div><div class="inv-dual-info"><div class="inv-unit-box"><div class="inv-unit-label">'+escHtml(cfg.unit1)+'</div><div class="inv-unit-val">'+qty+'</div>'+(p1?'<div class="inv-unit-price">'+fmt(p1)+' ea · '+fmt(qty*p1)+'</div>':'')+'</div><div class="inv-unit-box"><div class="inv-unit-label">'+escHtml(cfg.unit2)+'</div><div class="inv-unit-val">'+u2qty+'</div>'+(p2?'<div class="inv-unit-price">'+fmt(p2)+' ea · '+fmt(u2qty*p2)+'</div>':'')+'</div></div></div>';
+    var name  = line.Description || line.InventoryItem || line.description || 'Item';
+    var qty   = parseFloat(line.Qty || line.quantity || 0);
+    var price = parseFloat(line.UnitPrice || line.unitPrice || 0);
+    var match = inventoryItems.find(function(it){ return it.name===name || (line.InventoryItem && it.key===line.InventoryItem); });
+    var cfg   = match ? configs[match.key] : null;
+    if (!cfg) {
+      return '<div class="flex justify-between items-center px-4 py-2.5 border-b last:border-0">' +
+        '<div><div class="text-sm font-medium">'+esc(name)+'</div><div class="text-xs text-gray-400">Qty: '+qty+(price?' · '+fmt(price):'')+'</div></div>' +
+        '<span class="text-xs text-gray-300">No dual unit</span></div>';
+    }
+    var q2 = rd(qty * cfg.ratio);
+    return '<div class="px-4 py-3 border-b last:border-0 border-l-2 border-[#1e3a5c]">' +
+      '<div class="font-medium text-sm mb-1.5">'+esc(name)+'</div>' +
+      '<div class="grid grid-cols-2 gap-2">' +
+        '<div class="bg-blue-50 rounded p-2 text-center"><div class="text-xs text-blue-600 font-bold uppercase">'+esc(cfg.unit1)+'</div><div class="text-lg font-bold text-blue-900">'+qty+'</div>'+(cfg.price1?'<div class="text-xs text-blue-500">'+fmt(cfg.price1)+' ea</div>':'')+'</div>' +
+        '<div class="bg-blue-50 rounded p-2 text-center"><div class="text-xs text-blue-600 font-bold uppercase">'+esc(cfg.unit2)+'</div><div class="text-lg font-bold text-blue-900">'+q2+'</div>'+(cfg.price2?'<div class="text-xs text-blue-500">'+fmt(cfg.price2)+' ea</div>':'')+'</div>' +
+      '</div></div>';
   }).join('');
-  area.innerHTML = '<div style="font-size:11.5px;color:var(--gray-500);margin-bottom:8px">📋 '+escHtml(title)+'</div><div class="invoice-items-list">'+rows+'</div>';
+  area.innerHTML = '<div class="text-xs text-gray-400 px-4 py-2 border-b bg-gray-50">📋 '+esc(title)+'</div>' + rows;
 }
 
-// ── Utilities ──────────────────────────────────────────────────
-function rd(n)    { return Math.round(n*100000)/100000; }
-function fmt(n)   { return Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function setText(id,v){ var el=document.getElementById(id); if(el) el.textContent=v; }
-function setVal(id,v) { var el=document.getElementById(id); if(el) el.value=v; }
+// ── Utilities ────────────────────────────────────────
+function rd(n) { return Math.round(n*100000)/100000; }
+function fmt(n){ return Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function setText(id,v){ var e=document.getElementById(id); if(e) e.textContent=v; }
 
-var toastTimer;
+var _toastTimer;
 function showToast(msg) {
   var t = document.getElementById('toast');
-  if (!t) return;
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 3000);
+  t.textContent = msg; t.style.opacity = '1';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ t.style.opacity='0'; }, 3000);
 }
 </script>
 </body>
