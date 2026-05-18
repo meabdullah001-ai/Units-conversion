@@ -275,32 +275,66 @@ window.addEventListener('load', function() {
   // Resize hint to Manager.io
   try { window.parent.postMessage({ type:'resize', height:600 }, '*'); } catch(e) {}
 
-  // Fetch inventory — this also proves the bridge works
-  fetchAll('inventory-items', function(err, items) {
-    if (err) {
-      setStatus(false, 'Not connected (' + err.message + ')');
-      // Demo mode
+  // First verify bridge works, then try all known inventory endpoints
+  var inventoryEndpoints = [
+    'inventory-items',
+    'inventory-item-batch',
+    'InventoryItem',
+    'InventoryItems',
+  ];
+
+  function tryNextInventoryEndpoint(idx) {
+    if (idx >= inventoryEndpoints.length) {
+      // All endpoints failed — connected but no inventory
+      connected = true;
+      setStatus(true, 'Connected (no inventory found)');
+      document.getElementById('items-loading').innerHTML =
+        '<div class="p-4 text-xs text-amber-700 bg-amber-50">' +
+        'Connected to Manager.io but could not load inventory items.<br>' +
+        'You can add items manually using the <strong>+ Custom</strong> button.' +
+        '</div>';
+      document.getElementById('items-loading').classList.remove('hidden');
+      populateCalcDropdown();
+      return;
+    }
+    fetchAll(inventoryEndpoints[idx], function(err, items) {
+      if (err || !items || items.length === 0) {
+        tryNextInventoryEndpoint(idx + 1);
+        return;
+      }
+      connected = true;
+      setStatus(true, 'Connected ✓');
+      inventoryItems = items.map(function(it) {
+        return {
+          key:       it.Key  || it.key  || it.Id  || it.id  || String(Math.random()),
+          name:      it.Name || it.name || it.ItemName || it.itemName || '',
+          code:      it.Code || it.code || it.ItemCode || '',
+          buyPrice:  parseFloat(it.PurchasePrice||it.purchasePrice||it.BuyPrice||0)||0,
+          sellPrice: parseFloat(it.SalesPrice||it.salesPrice||it.SalePrice||it.salePrice||it.UnitPrice||0)||0,
+        };
+      }).filter(function(it) { return it.name; });
+      renderAll();
+      showToast('✓ ' + inventoryItems.length + ' items loaded from Manager.io');
+    });
+  }
+
+  // Try to connect — use sales-invoice-batch as ping (known working)
+  // then load inventory separately
+  managerRequest('/api4/sales-invoice-batch?PageSize=1', function(pingErr) {
+    if (pingErr) {
+      setStatus(false, 'Not connected');
       inventoryItems = [
-        { key:'demo1', name:'60x60 Tiles',    code:'T-6060', sellPrice:50 },
-        { key:'demo2', name:'30x60 Tiles',    code:'T-3060', sellPrice:35 },
-        { key:'demo3', name:'Cement Bag',     code:'C-001',  sellPrice:10 },
+        { key:'demo1', name:'60x60 Tiles',  code:'T-6060', sellPrice:50 },
+        { key:'demo2', name:'30x60 Tiles',  code:'T-3060', sellPrice:35 },
+        { key:'demo3', name:'Cement Bag',   code:'C-001',  sellPrice:10 },
       ];
       renderAll();
       return;
     }
-    connected = true;
+    // Bridge works — now load inventory
     setStatus(true, 'Connected ✓');
-    inventoryItems = items.map(function(it) {
-      return {
-        key:       it.Key  || it.key  || it.Id  || String(Math.random()),
-        name:      it.Name || it.name || '',
-        code:      it.Code || it.code || '',
-        buyPrice:  parseFloat(it.PurchasePrice || it.purchasePrice || 0) || 0,
-        sellPrice: parseFloat(it.SalesPrice    || it.salesPrice    || it.SalePrice || 0) || 0,
-      };
-    }).filter(function(it) { return it.name; });
-    renderAll();
-    showToast('✓ ' + inventoryItems.length + ' items loaded from Manager.io');
+    connected = true;
+    tryNextInventoryEndpoint(0);
   });
 });
 
@@ -508,25 +542,50 @@ function fillField(unit) {
 // ── Invoice tab ─────────────────────────────────────
 function loadInvoice() {
   var area = document.getElementById('invoice-area');
-  area.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">Loading…</div>';
-  managerRequest('/api4/page-context', function(err, page) {
-    if (err || !page) {
-      // Try sales-invoice-batch as fallback
-      managerRequest('/api4/sales-invoice-batch?PageSize=5', function(err2, data) {
-        if (err2) { area.innerHTML = '<div class="text-xs text-red-500 p-4">Could not load invoice. Navigate to a Sales Invoice in Manager.io first.</div>'; return; }
-        var invoices = Array.isArray(data) ? data : (data && (data.items||data.data)||[]);
-        if (!invoices.length) { area.innerHTML = '<div class="text-xs text-gray-400 p-4 text-center">No invoices found.</div>'; return; }
-        renderInvoiceLines(area, invoices[0].Lines || invoices[0].lines || [], invoices[0].Reference || invoices[0].Number || 'Latest Invoice');
-      });
+  area.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">Loading recent invoices…</div>';
+
+  // Note: Manager.io hides the extension panel when an invoice is open for editing.
+  // So we always load from the batch endpoint to show recent invoices.
+  managerRequest('/api4/sales-invoice-batch?PageSize=10', function(err, data) {
+    if (err) {
+      area.innerHTML = '<div class="text-xs text-red-500 p-4">Could not load invoices: ' + err.message + '</div>';
       return;
     }
-    var key = page.key || (page.query && page.query.key);
-    if (!key) { area.innerHTML = '<div class="text-xs text-amber-700 p-4">Open a specific Sales Invoice in Manager.io, then click Load.</div>'; return; }
-    managerRequest('/api4/sales-invoices/'+key, function(err2, inv) {
-      if (err2) { area.innerHTML = '<div class="text-xs text-red-500 p-4">Error: '+err2.message+'</div>'; return; }
-      renderInvoiceLines(area, inv.Lines||inv.lines||[], inv.Reference||inv.Number||'Invoice');
-    });
+    var invoices = Array.isArray(data) ? data : (data && (data.items||data.data)||[]);
+    if (!invoices.length) {
+      area.innerHTML = '<div class="text-xs text-gray-400 p-4 text-center">No sales invoices found.</div>';
+      return;
+    }
+
+    // Show invoice selector
+    var options = invoices.map(function(inv, i) {
+      var ref = inv.Reference || inv.reference || inv.Number || ('Invoice #' + (i+1));
+      var date = inv.IssueDate || inv.issueDate || inv.Date || '';
+      return '<option value="' + i + '">' + esc(ref) + (date ? ' — ' + date.slice(0,10) : '') + '</option>';
+    }).join('');
+
+    area.innerHTML =
+      '<div class="px-4 py-3 border-b bg-gray-50">' +
+        '<label class="text-xs font-bold text-gray-500 block mb-1">SELECT INVOICE</label>' +
+        '<select id="inv-select" onchange="showInvoiceLines()" class="w-full border rounded p-2 text-sm">' +
+          options +
+        '</select>' +
+      '</div>' +
+      '<div id="inv-lines"></div>';
+
+    window._loadedInvoices = invoices;
+    showInvoiceLines();
   });
+}
+
+function showInvoiceLines() {
+  var sel = document.getElementById('inv-select');
+  var area = document.getElementById('inv-lines');
+  if (!sel || !area) return;
+  var inv = window._loadedInvoices[parseInt(sel.value)];
+  if (!inv) return;
+  var lines = inv.Lines || inv.lines || inv.LineItems || [];
+  renderInvoiceLines(area, lines, inv.Reference || inv.Number || 'Invoice');
 }
 
 function renderInvoiceLines(area, lines, title) {
